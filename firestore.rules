@@ -46,10 +46,33 @@ service cloud.firestore {
       return status in ['draft', 'revision_required'];
     }
 
+    function canManagerTransitionReportStatus(currentStatus, nextStatus) {
+      return (currentStatus == 'draft' && nextStatus in ['draft', 'submitted']) ||
+        (currentStatus == 'revision_required' && nextStatus in ['revision_required', 'submitted']);
+    }
+
     function canManagerEditReport(reportId) {
       return isActiveManager()
         && getReportData(reportId).branchId in getUserData().branchIds
         && isEditableReportStatus(getReportData(reportId).status);
+    }
+
+    function validIssueData(reportId, data) {
+      return data.reportId == reportId
+        && data.branchId == getReportData(reportId).branchId
+        && data.reportDate == getReportData(reportId).reportDate
+        && data.type in ['claim', 'staff', 'facility']
+        && data.severity in ['low', 'medium', 'high', 'critical']
+        && data.status in ['open', 'in_progress', 'resolved']
+        && data.description is string;
+    }
+
+    function validCampaignResultData(reportId, data) {
+      return data.reportId == reportId
+        && data.branchId == getReportData(reportId).branchId
+        && data.reportDate == getReportData(reportId).reportDate
+        && data.campaignId is string
+        && data.metrics is map;
     }
 
     // ─── users ───────────────────────────────────────────────────────────
@@ -94,7 +117,7 @@ service cloud.firestore {
         && request.resource.data.id == reportId
         // reportId must follow {branchId}_{YYYY-MM-DD}
         && reportId == request.resource.data.branchId + '_' + request.resource.data.reportDate
-        && request.resource.data.status in ['draft', 'submitted'];
+        && request.resource.data.status == 'draft';
 
       allow update: if
         isAdmin() ||
@@ -105,7 +128,7 @@ service cloud.firestore {
           && request.resource.data.reportDate == resource.data.reportDate
           && request.resource.data.writerUid == resource.data.writerUid
           && request.resource.data.id == resource.data.id
-          && request.resource.data.status in ['draft', 'submitted', 'revision_required']);
+          && canManagerTransitionReportStatus(resource.data.status, request.resource.data.status));
 
       allow delete: if isAdmin();
 
@@ -115,7 +138,10 @@ service cloud.firestore {
           (isActiveManager()
             && get(/databases/$(database)/documents/dailyReports/$(reportId)).data.branchId
                in getUserData().branchIds);
-        allow write: if isAdmin() || canManagerEditReport(reportId);
+        allow create, update: if isAdmin() ||
+          (canManagerEditReport(reportId) && validIssueData(reportId, request.resource.data));
+        allow delete: if isAdmin() ||
+          (canManagerEditReport(reportId) && resource.data.reportId == reportId);
       }
     }
 
@@ -126,7 +152,7 @@ service cloud.firestore {
       allow create, update: if isAdmin() ||
         (request.resource.data.reportId is string
           && canManagerEditReport(request.resource.data.reportId)
-          && request.resource.data.branchId == getReportData(request.resource.data.reportId).branchId);
+          && validIssueData(request.resource.data.reportId, request.resource.data));
       allow delete: if isAdmin() ||
         (resource.data.reportId is string
           && canManagerEditReport(resource.data.reportId)
@@ -148,7 +174,7 @@ service cloud.firestore {
       allow create, update: if isAdmin() ||
         (request.resource.data.reportId is string
           && canManagerEditReport(request.resource.data.reportId)
-          && request.resource.data.branchId == getReportData(request.resource.data.reportId).branchId);
+          && validCampaignResultData(request.resource.data.reportId, request.resource.data));
       allow delete: if isAdmin() ||
         (resource.data.reportId is string
           && canManagerEditReport(resource.data.reportId)
