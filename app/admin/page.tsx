@@ -9,7 +9,6 @@ import KpiCard from "@/components/dashboard/KpiCard";
 import SubmissionDonut from "@/components/dashboard/SubmissionDonut";
 import ConversionFunnel from "@/components/dashboard/ConversionFunnel";
 import LoadingState from "@/components/common/LoadingState";
-import { ReportStatusBadge } from "@/components/common/StatusBadge";
 import { formatDate, todayYMD, calcPtConversionRate, formatPercent } from "@/lib/utils";
 import type { Branch, DailyReport, Issue, Campaign } from "@/types";
 

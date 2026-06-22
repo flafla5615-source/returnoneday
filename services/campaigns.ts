@@ -11,7 +11,7 @@ import {
   Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import type { Campaign, CampaignResult, CampaignStatus } from "@/types";
+import type { Campaign, CampaignResult } from "@/types";
 
 export async function createCampaign(
   data: Omit<Campaign, "id" | "createdAt" | "updatedAt">

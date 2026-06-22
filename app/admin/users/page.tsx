@@ -7,7 +7,7 @@ import LoadingState from "@/components/common/LoadingState";
 import EmptyState from "@/components/common/EmptyState";
 import { formatDate } from "@/lib/utils";
 import type { UserProfile, Branch, UserRole, UserStatus } from "@/types";
-import { CheckCircleIcon, XCircleIcon, EditIcon } from "lucide-react";
+import { EditIcon } from "lucide-react";
 
 const statusLabel: Record<UserStatus, string> = {
   pending: "승인대기",
