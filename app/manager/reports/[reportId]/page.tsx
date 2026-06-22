@@ -24,17 +24,36 @@ export default function ReportDetailPage() {
   const { reportId } = useParams<{ reportId: string }>();
   const [report, setReport] = useState<DailyReport | null | undefined>(undefined);
   const [comments, setComments] = useState<ReportComment[]>([]);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     if (!reportId) return;
-    Promise.all([getReportById(reportId), getReportComments(reportId)]).then(([r, cs]) => {
-      setReport(r);
-      setComments(cs);
-    });
+    let cancelled = false;
+
+    Promise.all([getReportById(reportId), getReportComments(reportId)])
+      .then(([r, cs]) => {
+        if (cancelled) return;
+        setLoadError("");
+        setReport(r);
+        setComments(cs);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        if (process.env.NODE_ENV === "development") {
+          console.error("[Report Detail Error]", error);
+        }
+        setLoadError("보고서를 찾을 수 없거나 접근 권한이 없습니다.");
+        setReport(null);
+        setComments([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [reportId]);
 
   if (report === undefined) return <LoadingState />;
-  if (!report) return <EmptyState title="보고서를 찾을 수 없습니다" />;
+  if (!report) return <EmptyState title={loadError || "보고서를 찾을 수 없습니다"} />;
 
   const convRate = calcPtConversionRate(report.ptConsultations, report.ptRegistrations);
   const revisionComments = comments.filter((comment) => comment.type === "revision_request");
