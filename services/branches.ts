@@ -1,12 +1,10 @@
 import {
   collection,
   doc,
-  addDoc,
   getDoc,
   getDocs,
   updateDoc,
   query,
-  where,
   orderBy,
   Timestamp,
   setDoc,
@@ -16,9 +14,11 @@ import type { Branch } from "@/types";
 
 export async function getAllBranches(): Promise<Branch[]> {
   const snap = await getDocs(
-    query(collection(db, "branches"), where("active", "==", true), orderBy("sortOrder", "asc"))
+    query(collection(db, "branches"), orderBy("sortOrder", "asc"))
   );
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Branch);
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }) as Branch)
+    .filter((branch) => branch.active);
 }
 
 export async function getAllBranchesIncludingInactive(): Promise<Branch[]> {

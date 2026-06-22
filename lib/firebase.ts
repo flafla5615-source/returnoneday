@@ -15,8 +15,8 @@ if (!process.env.NEXT_PUBLIC_FIREBASE_APP_ID) missing.push("NEXT_PUBLIC_FIREBASE
 
 if (missing.length > 0) {
   throw new Error(
-    `[Firebase] 누락된 환경변수:\n${missing.map((k) => `  - ${k}`).join("\n")}\n` +
-      ".env.local 파일을 확인하거나 Vercel 환경변수 설정을 확인해주세요."
+    `[Firebase] Missing environment variables:\n${missing.map((k) => `  - ${k}`).join("\n")}\n` +
+      "Create .env.local from .env.example, or check the Vercel environment variables."
   );
 }
 
@@ -29,7 +29,7 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID!,
 };
 
-// getApps().length > 0 → 이미 초기화된 앱 재사용 (중복 초기화 방지)
+// Reuse the existing app during hot reloads.
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
 export const auth = getAuth(app);

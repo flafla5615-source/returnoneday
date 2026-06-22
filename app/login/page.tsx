@@ -8,7 +8,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { EyeIcon, EyeOffIcon, LockIcon, MailIcon } from "lucide-react";
 import type { User } from "firebase/auth";
-import { signIn, getUserProfile } from "@/lib/auth";
+import { signIn, getUserProfile, logOut } from "@/lib/auth";
 
 const schema = z.object({
   email: z.string().email("올바른 이메일을 입력해주세요"),
@@ -25,6 +25,10 @@ const AUTH_ERROR_MESSAGES: Record<string, string> = {
   "auth/invalid-email":       "이메일 형식이 올바르지 않습니다.",
   "auth/too-many-requests":   "로그인 시도가 너무 많습니다. 잠시 후 다시 시도해주세요.",
   "auth/user-disabled":       "비활성화된 계정입니다. 관리자에게 문의해주세요.",
+  "auth/unauthorized-domain":  "현재 접속한 주소가 Firebase 로그인 승인 도메인에 등록되어 있지 않습니다.",
+  "auth/network-request-failed": "네트워크 연결 문제로 로그인 요청을 완료하지 못했습니다.",
+  "auth/api-key-not-valid.-please-pass-a-valid-api-key.": "Firebase API 키 설정이 올바르지 않습니다.",
+  "auth/operation-not-supported-in-this-environment": "현재 브라우저 환경에서 Firebase 로그인을 실행할 수 없습니다.",
   "permission-denied":        "로그인은 성공했지만 사용자 권한 정보를 읽을 수 없습니다.",
 };
 
@@ -33,7 +37,7 @@ function getFirebaseErrorMessage(error: unknown): string {
   if (process.env.NODE_ENV === "development") {
     console.error("[Firebase Error]", code, (error as Error).message);
   }
-  return AUTH_ERROR_MESSAGES[code] ?? "로그인 중 오류가 발생했습니다.";
+  return AUTH_ERROR_MESSAGES[code] ?? `로그인 중 오류가 발생했습니다.${code ? ` (${code})` : ""}`;
 }
 
 export default function LoginPage() {
@@ -68,6 +72,7 @@ export default function LoginPage() {
 
       if (!profile) {
         // Auth 계정은 있지만 Firestore users 문서가 없는 경우
+        await logOut();
         setAuthError("계정은 존재하지만 관리자 승인이 완료되지 않았습니다.");
         return;
       }
@@ -77,6 +82,7 @@ export default function LoginPage() {
         return;
       }
       if (profile.status === "suspended") {
+        await logOut();
         setAuthError("계정이 정지되었습니다. 관리자에게 문의해주세요.");
         return;
       }
@@ -92,8 +98,9 @@ export default function LoginPage() {
       }
       setAuthError(
         AUTH_ERROR_MESSAGES[code] ??
-        "사용자 정보를 불러오는 중 오류가 발생했습니다."
+        `사용자 정보를 불러오는 중 오류가 발생했습니다.${code ? ` (${code})` : ""}`
       );
+      await logOut();
     } finally {
       setLoading(false);
     }

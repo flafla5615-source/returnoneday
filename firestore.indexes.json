@@ -1,6 +1,14 @@
 {
   "indexes": [
     {
+      "collectionGroup": "branches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "active", "order": "ASCENDING" },
+        { "fieldPath": "sortOrder", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "dailyReports",
       "queryScope": "COLLECTION",
       "fields": [

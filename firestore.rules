@@ -13,21 +13,25 @@ service cloud.firestore {
       return request.auth.uid;
     }
 
+    function hasUserProfile() {
+      return isAuth() && exists(/databases/$(database)/documents/users/$(uid()));
+    }
+
     function getUserData() {
       return get(/databases/$(database)/documents/users/$(uid())).data;
     }
 
     // active status regardless of role
     function isActive() {
-      return isAuth() && getUserData().status == 'active';
+      return hasUserProfile() && getUserData().status == 'active';
     }
 
     function isAdmin() {
-      return isAuth() && getUserData().role == 'admin' && getUserData().status == 'active';
+      return hasUserProfile() && getUserData().role == 'admin' && getUserData().status == 'active';
     }
 
     function isActiveManager() {
-      return isAuth() && getUserData().role == 'branch_manager' && getUserData().status == 'active';
+      return hasUserProfile() && getUserData().role == 'branch_manager' && getUserData().status == 'active';
     }
 
     function isManagerOfBranch(branchId) {
@@ -47,8 +51,14 @@ service cloud.firestore {
 
       // New user creates own document on signup — must be branch_manager/pending
       allow create: if isAuth() && uid() == userId
+        && request.resource.data.keys().hasOnly([
+          'uid', 'name', 'email', 'role', 'status', 'branchIds', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.uid == uid()
         && request.resource.data.role == 'branch_manager'
-        && request.resource.data.status == 'pending';
+        && request.resource.data.status == 'pending'
+        && request.resource.data.branchIds is list
+        && request.resource.data.branchIds.size() == 0;
 
       allow delete: if isAdmin();
     }
@@ -128,7 +138,10 @@ service cloud.firestore {
         (isActiveManager()
           && get(/databases/$(database)/documents/dailyReports/$(resource.data.reportId)).data.branchId
              in getUserData().branchIds);
-      allow create: if isActive();
+      allow create: if isActive()
+        && request.resource.data.authorUid == uid()
+        && request.resource.data.reportId is string
+        && request.resource.data.content is string;
       allow update, delete: if isAdmin();
     }
 
