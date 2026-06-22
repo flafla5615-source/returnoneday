@@ -1,0 +1,142 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helper functions ──────────────────────────────────────────────────
+
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(uid())).data;
+    }
+
+    // active status regardless of role
+    function isActive() {
+      return isAuth() && getUserData().status == 'active';
+    }
+
+    function isAdmin() {
+      return isAuth() && getUserData().role == 'admin' && getUserData().status == 'active';
+    }
+
+    function isActiveManager() {
+      return isAuth() && getUserData().role == 'branch_manager' && getUserData().status == 'active';
+    }
+
+    function isManagerOfBranch(branchId) {
+      return isActiveManager() && branchId in getUserData().branchIds;
+    }
+
+    // ─── users ───────────────────────────────────────────────────────────
+    match /users/{userId} {
+      // Users can read their own document (any status); admins can read all
+      allow read: if isAuth() && (uid() == userId || isAdmin());
+
+      // Only admins can change role, status, branchIds
+      allow update: if isAdmin() ||
+        (isAuth() && uid() == userId
+          && !request.resource.data.diff(resource.data).affectedKeys()
+              .hasAny(['role', 'status', 'branchIds']));
+
+      // New user creates own document on signup — must be branch_manager/pending
+      allow create: if isAuth() && uid() == userId
+        && request.resource.data.role == 'branch_manager'
+        && request.resource.data.status == 'pending';
+
+      allow delete: if isAdmin();
+    }
+
+    // ─── branches ─────────────────────────────────────────────────────────
+    match /branches/{branchId} {
+      allow read: if isAdmin() || isManagerOfBranch(branchId);
+      allow write: if isAdmin();
+    }
+
+    // ─── dailyReports ─────────────────────────────────────────────────────
+    match /dailyReports/{reportId} {
+      allow read: if isAdmin() ||
+        (isActiveManager() && resource.data.branchId in getUserData().branchIds);
+
+      allow create: if isActiveManager()
+        && request.resource.data.branchId in getUserData().branchIds
+        && request.resource.data.writerUid == uid()
+        // reportId must follow {branchId}_{YYYY-MM-DD}
+        && reportId == request.resource.data.branchId + '_' + request.resource.data.reportDate
+        && request.resource.data.status in ['draft', 'submitted'];
+
+      allow update: if
+        isAdmin() ||
+        (isActiveManager()
+          && resource.data.branchId in getUserData().branchIds
+          && resource.data.status != 'locked'
+          && request.resource.data.branchId == resource.data.branchId
+          && request.resource.data.reportDate == resource.data.reportDate
+          && request.resource.data.writerUid == resource.data.writerUid);
+
+      allow delete: if isAdmin();
+
+      // Sub-collection: issues
+      match /issues/{issueId} {
+        allow read: if isAdmin() ||
+          (isActiveManager()
+            && get(/databases/$(database)/documents/dailyReports/$(reportId)).data.branchId
+               in getUserData().branchIds);
+        allow write: if isAdmin() ||
+          (isActiveManager()
+            && get(/databases/$(database)/documents/dailyReports/$(reportId)).data.branchId
+               in getUserData().branchIds
+            && get(/databases/$(database)/documents/dailyReports/$(reportId)).data.status != 'locked');
+      }
+    }
+
+    // ─── issues (top-level for admin queries) ─────────────────────────────
+    match /issues/{issueId} {
+      allow read: if isAdmin() ||
+        (isActiveManager() && resource.data.branchId in getUserData().branchIds);
+      allow write: if isAdmin() ||
+        (isActiveManager()
+          && request.resource.data.branchId in getUserData().branchIds);
+    }
+
+    // ─── campaigns ────────────────────────────────────────────────────────
+    // Only active users (admin or active manager) can read campaigns.
+    // Pending / suspended users are excluded.
+    match /campaigns/{campaignId} {
+      allow read: if isActive();
+      allow write: if isAdmin();
+    }
+
+    // ─── campaignResults ─────────────────────────────────────────────────
+    match /campaignResults/{resultId} {
+      allow read: if isAdmin() ||
+        (isActiveManager() && resource.data.branchId in getUserData().branchIds);
+      allow write: if isAdmin() ||
+        (isActiveManager() && request.resource.data.branchId in getUserData().branchIds);
+    }
+
+    // ─── reportComments ──────────────────────────────────────────────────
+    // Only the admin or the active manager who owns the report's branch can read comments.
+    match /reportComments/{commentId} {
+      allow read: if isAdmin() ||
+        (isActiveManager()
+          && get(/databases/$(database)/documents/dailyReports/$(resource.data.reportId)).data.branchId
+             in getUserData().branchIds);
+      allow create: if isActive();
+      allow update, delete: if isAdmin();
+    }
+
+    // ─── auditLogs ────────────────────────────────────────────────────────
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAuth();
+      allow update, delete: if false;
+    }
+  }
+}
