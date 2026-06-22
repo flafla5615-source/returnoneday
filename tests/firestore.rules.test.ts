@@ -138,7 +138,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await testEnv.cleanup();
+  if (testEnv) {
+    await testEnv.cleanup();
+  }
 });
 
 // ─── 1. 비로그인 사용자 — 모든 읽기 거부 ─────────────────────────────────

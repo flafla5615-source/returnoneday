@@ -42,6 +42,10 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/dailyReports/$(reportId)).data;
     }
 
+    function reportExists(reportId) {
+      return exists(/databases/$(database)/documents/dailyReports/$(reportId));
+    }
+
     function isEditableReportStatus(status) {
       return status in ['draft', 'revision_required'];
     }
@@ -108,7 +112,11 @@ service cloud.firestore {
 
     // ─── dailyReports ─────────────────────────────────────────────────────
     match /dailyReports/{reportId} {
-      allow read: if isAdmin() ||
+      allow get: if isAdmin() ||
+        (isActiveManager()
+          && (!reportExists(reportId) || resource.data.branchId in getUserData().branchIds));
+
+      allow list: if isAdmin() ||
         (isActiveManager() && resource.data.branchId in getUserData().branchIds);
 
       allow create: if isActiveManager()
