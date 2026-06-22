@@ -3,12 +3,12 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { getReportById } from "@/services/reports";
+import { getReportById, getReportComments } from "@/services/reports";
 import { ReportStatusBadge } from "@/components/common/StatusBadge";
 import LoadingState from "@/components/common/LoadingState";
 import EmptyState from "@/components/common/EmptyState";
 import { formatDate, formatDateTime, formatPercent, calcPtConversionRate } from "@/lib/utils";
-import type { DailyReport } from "@/types";
+import type { DailyReport, ReportComment } from "@/types";
 import { ChevronLeftIcon } from "lucide-react";
 
 function Row({ label, value }: { label: string; value: string | number }) {
@@ -23,16 +23,21 @@ function Row({ label, value }: { label: string; value: string | number }) {
 export default function ReportDetailPage() {
   const { reportId } = useParams<{ reportId: string }>();
   const [report, setReport] = useState<DailyReport | null | undefined>(undefined);
+  const [comments, setComments] = useState<ReportComment[]>([]);
 
   useEffect(() => {
     if (!reportId) return;
-    getReportById(reportId).then(setReport);
+    Promise.all([getReportById(reportId), getReportComments(reportId)]).then(([r, cs]) => {
+      setReport(r);
+      setComments(cs);
+    });
   }, [reportId]);
 
   if (report === undefined) return <LoadingState />;
   if (!report) return <EmptyState title="보고서를 찾을 수 없습니다" />;
 
   const convRate = calcPtConversionRate(report.ptConsultations, report.ptRegistrations);
+  const revisionComments = comments.filter((comment) => comment.type === "revision_request");
 
   return (
     <div className="max-w-2xl mx-auto space-y-4">
@@ -84,6 +89,18 @@ export default function ReportDetailPage() {
         <div className="bg-orange-50 border border-orange-200 rounded-xl p-4">
           <p className="text-sm font-medium text-orange-700 mb-1">수정 요청</p>
           <p className="text-sm text-orange-600">관리자가 수정을 요청했습니다. 보고서를 수정해주세요.</p>
+          {revisionComments.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {revisionComments.map((comment) => (
+                <div key={comment.id} className="rounded-lg bg-white/70 border border-orange-100 px-3 py-2">
+                  <p className="text-xs text-orange-500">
+                    {comment.authorName} · {formatDateTime(comment.createdAt.toDate())}
+                  </p>
+                  <p className="mt-1 text-sm text-orange-800 whitespace-pre-wrap">{comment.content}</p>
+                </div>
+              ))}
+            </div>
+          )}
           <Link
             href="/manager/report/new"
             className="mt-2 inline-block px-4 py-2 bg-orange-600 text-white text-sm rounded-lg hover:bg-orange-700"

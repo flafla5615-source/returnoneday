@@ -171,14 +171,18 @@ export default function NewReportPage() {
 
   const autoSave = useCallback(async () => {
     if (!selectedBranchId || !user) return;
+    if (loading) return;
+    const canEditReport = !existing || existing.status === "draft" || existing.status === "revision_required";
+    if (!canEditReport) return;
     setSaving(true);
     try {
-      await upsertReport(selectedBranchId, today, user.uid, collectData(), "draft");
+      const nextStatus = existing?.status === "revision_required" ? "revision_required" : "draft";
+      await upsertReport(selectedBranchId, today, user.uid, collectData(), nextStatus);
       setLastSaved(new Date());
     } finally {
       setSaving(false);
     }
-  }, [selectedBranchId, today, user, collectData]);
+  }, [selectedBranchId, today, user, loading, existing, collectData]);
 
   const triggerDebounce = useCallback(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -190,6 +194,8 @@ export default function NewReportPage() {
 
   async function handleSubmit() {
     if (!selectedBranchId || !user) return;
+    const canEditReport = !existing || existing.status === "draft" || existing.status === "revision_required";
+    if (!canEditReport) return;
     setSaving(true);
     try {
       const rid = await upsertReport(selectedBranchId, today, user.uid, collectData(), "submitted");
@@ -204,9 +210,7 @@ export default function NewReportPage() {
           status: iss.status,
           memo: iss.memo || undefined,
         }));
-      if (activeIssues.length > 0) {
-        await upsertIssues(rid, selectedBranchId, today, activeIssues);
-      }
+      await upsertIssues(rid, selectedBranchId, today, activeIssues);
       // Save campaign results
       for (const c of campaigns) {
         const metrics = campaignResults[c.id] ?? {};
@@ -233,6 +237,9 @@ export default function NewReportPage() {
   if (loading) return <LoadingState />;
 
   const isLocked = existing?.status === "locked";
+  const isSubmitted = existing?.status === "submitted";
+  const isRevisionRequired = existing?.status === "revision_required";
+  const canEditReport = !existing || existing.status === "draft" || isRevisionRequired;
 
   return (
     <div className="max-w-2xl mx-auto space-y-4">
@@ -258,6 +265,18 @@ export default function NewReportPage() {
       {isLocked && (
         <div className="bg-gray-100 text-gray-600 rounded-xl px-4 py-3 text-sm">
           이 보고서는 잠금 처리되어 수정할 수 없습니다.
+        </div>
+      )}
+
+      {isSubmitted && (
+        <div className="bg-blue-50 text-blue-700 border border-blue-100 rounded-xl px-4 py-3 text-sm">
+          제출 완료된 보고서입니다. 관리자가 수정 요청을 보내기 전까지는 내용을 변경할 수 없습니다.
+        </div>
+      )}
+
+      {isRevisionRequired && (
+        <div className="bg-orange-50 text-orange-700 border border-orange-100 rounded-xl px-4 py-3 text-sm">
+          관리자가 수정을 요청한 보고서입니다. 내용을 보완한 뒤 다시 제출해주세요.
         </div>
       )}
 
@@ -588,6 +607,7 @@ export default function NewReportPage() {
             )}
             <button
               onClick={autoSave}
+              disabled={!canEditReport || saving}
               className="px-3 py-2 text-sm border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
             >
               임시 저장
@@ -602,7 +622,7 @@ export default function NewReportPage() {
               </button>
             ) : (
               <button
-                disabled={isLocked}
+                disabled={!canEditReport || saving}
                 onClick={() => setSubmitOpen(true)}
                 className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
