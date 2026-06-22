@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { getBranchesByIds } from "@/services/branches";
 import { getReport, upsertReport } from "@/services/reports";
-import { upsertIssues } from "@/services/issues";
+import { getIssuesByReport, upsertIssues } from "@/services/issues";
 import { getActiveCampaigns, upsertCampaignResult, getCampaignResultByReport } from "@/services/campaigns";
 import ReportStepper from "@/components/reports/ReportStepper";
 import AutosaveIndicator from "@/components/reports/AutosaveIndicator";
@@ -21,7 +21,7 @@ import {
 } from "@/lib/utils";
 import type { Branch, DailyReport, Issue, Campaign } from "@/types";
 import { format, subDays } from "date-fns";
-import { ChevronLeftIcon, ChevronRightIcon, PlusIcon, TrashIcon } from "lucide-react";
+import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 
 const TM_METHODS = ["전화", "문자", "카카오톡", "기타"];
 const PROMO_METHODS = ["전단지", "현수막", "배너", "제휴", "외부 행사", "기타"];
@@ -97,6 +97,67 @@ export default function NewReportPage() {
     defaultIssue("facility"),
   ]);
 
+  const resetReportForm = useCallback(() => {
+    setExisting(null);
+    setActiveMembers(null);
+    setInquiries(null);
+    setPtConsultations(null);
+    setPtRegistrations(null);
+    setReRegistrations(null);
+    setComebackMembers(null);
+    setHappyCalls(null);
+    setNewHappyCalls(null);
+    setExistingHappyCalls(null);
+    setExpiringTmCount(null);
+    setExpiringTmMethods([]);
+    setUnregisteredTmCount(null);
+    setUnregisteredTmMethods([]);
+    setOfflinePromotionCount(null);
+    setOfflinePromotionMethods([]);
+    setPromotionMemo("");
+    setIssues([defaultIssue("claim"), defaultIssue("staff"), defaultIssue("facility")]);
+    setCampaignResults({});
+    setLastSaved(null);
+  }, []);
+
+  const applyReport = useCallback((report: DailyReport) => {
+    setExisting(report);
+    setActiveMembers(report.activeMembers);
+    setInquiries(report.inquiries);
+    setPtConsultations(report.ptConsultations);
+    setPtRegistrations(report.ptRegistrations);
+    setReRegistrations(report.reRegistrations);
+    setComebackMembers(report.comebackMembers);
+    setHappyCalls(report.happyCalls);
+    setNewHappyCalls(report.newHappyCalls);
+    setExistingHappyCalls(report.existingHappyCalls);
+    setExpiringTmCount(report.expiringTmCount);
+    setExpiringTmMethods(report.expiringTmMethods);
+    setUnregisteredTmCount(report.unregisteredTmCount);
+    setUnregisteredTmMethods(report.unregisteredTmMethods);
+    setOfflinePromotionCount(report.offlinePromotionCount);
+    setOfflinePromotionMethods(report.offlinePromotionMethods);
+    setPromotionMemo(report.promotionMemo ?? "");
+  }, []);
+
+  const applyIssues = useCallback((reportIssues: Issue[]) => {
+    const issueMap = new Map(reportIssues.map((issue) => [issue.type, issue]));
+    setIssues((["claim", "staff", "facility"] as Issue["type"][]).map((type) => {
+      const issue = issueMap.get(type);
+      return issue
+        ? {
+            type,
+            hasIssue: true,
+            category: issue.category,
+            description: issue.description,
+            severity: issue.severity,
+            status: issue.status,
+            memo: issue.memo ?? "",
+          }
+        : defaultIssue(type);
+    }));
+  }, []);
+
   useEffect(() => {
     if (!profile) return;
     getBranchesByIds(profile.branchIds).then((bs) => {
@@ -107,40 +168,54 @@ export default function NewReportPage() {
 
   useEffect(() => {
     if (!selectedBranchId) return;
+    let cancelled = false;
     setLoading(true);
-    Promise.all([
-      getReport(selectedBranchId, today),
-      getReport(selectedBranchId, ymd),
-      getActiveCampaigns(selectedBranchId),
-    ]).then(([ex, yd, cps]) => {
-      setYesterday(yd);
-      setCampaigns(cps);
-      if (ex) {
-        setExisting(ex);
-        setActiveMembers(ex.activeMembers);
-        setInquiries(ex.inquiries);
-        setPtConsultations(ex.ptConsultations);
-        setPtRegistrations(ex.ptRegistrations);
-        setReRegistrations(ex.reRegistrations);
-        setComebackMembers(ex.comebackMembers);
-        setHappyCalls(ex.happyCalls);
-        setNewHappyCalls(ex.newHappyCalls);
-        setExistingHappyCalls(ex.existingHappyCalls);
-        setExpiringTmCount(ex.expiringTmCount);
-        setExpiringTmMethods(ex.expiringTmMethods);
-        setUnregisteredTmCount(ex.unregisteredTmCount);
-        setUnregisteredTmMethods(ex.unregisteredTmMethods);
-        setOfflinePromotionCount(ex.offlinePromotionCount);
-        setOfflinePromotionMethods(ex.offlinePromotionMethods);
-        setPromotionMemo(ex.promotionMemo ?? "");
+    setCampaignResults({});
+    setLastSaved(null);
+    const currentReportId = getReportId(selectedBranchId, today);
+
+    async function loadReportContext() {
+      try {
+        const [ex, yd, cps] = await Promise.all([
+          getReport(selectedBranchId, today),
+          getReport(selectedBranchId, ymd),
+          getActiveCampaigns(selectedBranchId),
+        ]);
+        let reportIssues: Issue[] = [];
+        if (ex) {
+          try {
+            reportIssues = await getIssuesByReport(currentReportId);
+          } catch (issueError) {
+            console.error("[Report] Failed to load report issues", issueError);
+          }
+        }
+        if (cancelled) return;
+        setYesterday(yd);
+        setCampaigns(cps);
+        if (ex) {
+          applyReport(ex);
+          applyIssues(reportIssues);
+        } else {
+          resetReportForm();
+        }
+      } catch (error) {
+        console.error("[Report] Failed to load report context", error);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-      setLoading(false);
-    });
-  }, [selectedBranchId, today, ymd]);
+    }
+
+    loadReportContext();
+    return () => { cancelled = true; };
+  }, [selectedBranchId, today, ymd, applyIssues, applyReport, resetReportForm]);
 
   // Load campaign results
   useEffect(() => {
-    if (!reportId || campaigns.length === 0) return;
+    if (!reportId) return;
+    if (campaigns.length === 0) {
+      setCampaignResults({});
+      return;
+    }
     const rMap: Record<string, Record<string, number | null>> = {};
     Promise.all(
       campaigns.map(async (c) => {
@@ -169,11 +244,33 @@ export default function NewReportPage() {
     promotionMemo: promotionMemo || undefined,
   }), [activeMembers, inquiries, ptConsultations, ptRegistrations, reRegistrations, comebackMembers, happyCalls, newHappyCalls, existingHappyCalls, expiringTmCount, expiringTmMethods, unregisteredTmCount, unregisteredTmMethods, offlinePromotionCount, offlinePromotionMethods, promotionMemo]);
 
+  const hasAnyReportInput = useCallback(() => {
+    return [
+      activeMembers,
+      inquiries,
+      ptConsultations,
+      ptRegistrations,
+      reRegistrations,
+      comebackMembers,
+      happyCalls,
+      newHappyCalls,
+      existingHappyCalls,
+      expiringTmCount,
+      unregisteredTmCount,
+      offlinePromotionCount,
+    ].some((value) => value !== null) ||
+      expiringTmMethods.length > 0 ||
+      unregisteredTmMethods.length > 0 ||
+      offlinePromotionMethods.length > 0 ||
+      promotionMemo.trim().length > 0;
+  }, [activeMembers, inquiries, ptConsultations, ptRegistrations, reRegistrations, comebackMembers, happyCalls, newHappyCalls, existingHappyCalls, expiringTmCount, unregisteredTmCount, offlinePromotionCount, expiringTmMethods, unregisteredTmMethods, offlinePromotionMethods, promotionMemo]);
+
   const autoSave = useCallback(async () => {
     if (!selectedBranchId || !user) return;
     if (loading) return;
     const canEditReport = !existing || existing.status === "draft" || existing.status === "revision_required";
     if (!canEditReport) return;
+    if (!existing && !hasAnyReportInput()) return;
     setSaving(true);
     try {
       const nextStatus = existing?.status === "revision_required" ? "revision_required" : "draft";
@@ -182,7 +279,7 @@ export default function NewReportPage() {
     } finally {
       setSaving(false);
     }
-  }, [selectedBranchId, today, user, loading, existing, collectData]);
+  }, [selectedBranchId, today, user, loading, existing, collectData, hasAnyReportInput]);
 
   const triggerDebounce = useCallback(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
