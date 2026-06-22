@@ -9,7 +9,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test:rules": "jest tests/firestore.rules.test.ts",
-    "create-admin": "tsx scripts/create-admin.ts"
+    "create-admin": "node --env-file=.env.local scripts/create-admin.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",

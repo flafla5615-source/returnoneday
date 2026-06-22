@@ -7,8 +7,8 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { EyeIcon, EyeOffIcon, LockIcon, MailIcon } from "lucide-react";
-import { signIn } from "@/lib/auth";
-import { getUserProfile } from "@/lib/auth";
+import type { User } from "firebase/auth";
+import { signIn, getUserProfile } from "@/lib/auth";
 
 const schema = z.object({
   email: z.string().email("올바른 이메일을 입력해주세요"),
@@ -16,6 +16,25 @@ const schema = z.object({
   remember: z.boolean().optional(),
 });
 type FormData = z.infer<typeof schema>;
+
+// Firebase Auth 에러 코드 → 사용자 친화적 메시지
+const AUTH_ERROR_MESSAGES: Record<string, string> = {
+  "auth/invalid-credential":  "이메일 또는 비밀번호가 올바르지 않습니다.",
+  "auth/user-not-found":      "등록되지 않은 계정입니다.",
+  "auth/wrong-password":      "비밀번호가 올바르지 않습니다.",
+  "auth/invalid-email":       "이메일 형식이 올바르지 않습니다.",
+  "auth/too-many-requests":   "로그인 시도가 너무 많습니다. 잠시 후 다시 시도해주세요.",
+  "auth/user-disabled":       "비활성화된 계정입니다. 관리자에게 문의해주세요.",
+  "permission-denied":        "로그인은 성공했지만 사용자 권한 정보를 읽을 수 없습니다.",
+};
+
+function getFirebaseErrorMessage(error: unknown): string {
+  const code = (error as { code?: string }).code ?? "";
+  if (process.env.NODE_ENV === "development") {
+    console.error("[Firebase Error]", code, (error as Error).message);
+  }
+  return AUTH_ERROR_MESSAGES[code] ?? "로그인 중 오류가 발생했습니다.";
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -32,20 +51,49 @@ export default function LoginPage() {
   async function onSubmit(data: FormData) {
     setLoading(true);
     setAuthError("");
+
+    // ── Step 1: Firebase Auth 로그인 ────────────────────────────────────────
+    let user!: User;
     try {
-      const user = await signIn(data.email, data.password);
+      user = await signIn(data.email, data.password);
+    } catch (error) {
+      setAuthError(getFirebaseErrorMessage(error));
+      setLoading(false);
+      return;
+    }
+
+    // ── Step 2: Firestore 프로필 조회 및 라우팅 ───────────────────────────
+    try {
       const profile = await getUserProfile(user.uid);
-      if (!profile || profile.status === "pending") {
+
+      if (!profile) {
+        // Auth 계정은 있지만 Firestore users 문서가 없는 경우
+        setAuthError("계정은 존재하지만 관리자 승인이 완료되지 않았습니다.");
+        return;
+      }
+
+      if (profile.status === "pending") {
         router.push("/pending");
-      } else if (profile.status === "suspended") {
+        return;
+      }
+      if (profile.status === "suspended") {
         setAuthError("계정이 정지되었습니다. 관리자에게 문의해주세요.");
-      } else if (profile.role === "admin") {
+        return;
+      }
+      if (profile.role === "admin") {
         router.push("/admin");
       } else {
         router.push("/manager");
       }
-    } catch {
-      setAuthError("이메일 또는 비밀번호가 올바르지 않습니다.");
+    } catch (error) {
+      const code = (error as { code?: string }).code ?? "";
+      if (process.env.NODE_ENV === "development") {
+        console.error("[Profile Error]", code, (error as Error).message);
+      }
+      setAuthError(
+        AUTH_ERROR_MESSAGES[code] ??
+        "사용자 정보를 불러오는 중 오류가 발생했습니다."
+      );
     } finally {
       setLoading(false);
     }
