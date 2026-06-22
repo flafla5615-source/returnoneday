@@ -38,6 +38,20 @@ service cloud.firestore {
       return isActiveManager() && branchId in getUserData().branchIds;
     }
 
+    function getReportData(reportId) {
+      return get(/databases/$(database)/documents/dailyReports/$(reportId)).data;
+    }
+
+    function isEditableReportStatus(status) {
+      return status in ['draft', 'revision_required'];
+    }
+
+    function canManagerEditReport(reportId) {
+      return isActiveManager()
+        && getReportData(reportId).branchId in getUserData().branchIds
+        && isEditableReportStatus(getReportData(reportId).status);
+    }
+
     // ─── users ───────────────────────────────────────────────────────────
     match /users/{userId} {
       // Users can read their own document (any status); admins can read all
@@ -77,6 +91,7 @@ service cloud.firestore {
       allow create: if isActiveManager()
         && request.resource.data.branchId in getUserData().branchIds
         && request.resource.data.writerUid == uid()
+        && request.resource.data.id == reportId
         // reportId must follow {branchId}_{YYYY-MM-DD}
         && reportId == request.resource.data.branchId + '_' + request.resource.data.reportDate
         && request.resource.data.status in ['draft', 'submitted'];
@@ -85,10 +100,12 @@ service cloud.firestore {
         isAdmin() ||
         (isActiveManager()
           && resource.data.branchId in getUserData().branchIds
-          && resource.data.status != 'locked'
+          && isEditableReportStatus(resource.data.status)
           && request.resource.data.branchId == resource.data.branchId
           && request.resource.data.reportDate == resource.data.reportDate
-          && request.resource.data.writerUid == resource.data.writerUid);
+          && request.resource.data.writerUid == resource.data.writerUid
+          && request.resource.data.id == resource.data.id
+          && request.resource.data.status in ['draft', 'submitted', 'revision_required']);
 
       allow delete: if isAdmin();
 
@@ -98,11 +115,7 @@ service cloud.firestore {
           (isActiveManager()
             && get(/databases/$(database)/documents/dailyReports/$(reportId)).data.branchId
                in getUserData().branchIds);
-        allow write: if isAdmin() ||
-          (isActiveManager()
-            && get(/databases/$(database)/documents/dailyReports/$(reportId)).data.branchId
-               in getUserData().branchIds
-            && get(/databases/$(database)/documents/dailyReports/$(reportId)).data.status != 'locked');
+        allow write: if isAdmin() || canManagerEditReport(reportId);
       }
     }
 
@@ -110,9 +123,14 @@ service cloud.firestore {
     match /issues/{issueId} {
       allow read: if isAdmin() ||
         (isActiveManager() && resource.data.branchId in getUserData().branchIds);
-      allow write: if isAdmin() ||
-        (isActiveManager()
-          && request.resource.data.branchId in getUserData().branchIds);
+      allow create, update: if isAdmin() ||
+        (request.resource.data.reportId is string
+          && canManagerEditReport(request.resource.data.reportId)
+          && request.resource.data.branchId == getReportData(request.resource.data.reportId).branchId);
+      allow delete: if isAdmin() ||
+        (resource.data.reportId is string
+          && canManagerEditReport(resource.data.reportId)
+          && resource.data.branchId == getReportData(resource.data.reportId).branchId);
     }
 
     // ─── campaigns ────────────────────────────────────────────────────────
@@ -127,8 +145,14 @@ service cloud.firestore {
     match /campaignResults/{resultId} {
       allow read: if isAdmin() ||
         (isActiveManager() && resource.data.branchId in getUserData().branchIds);
-      allow write: if isAdmin() ||
-        (isActiveManager() && request.resource.data.branchId in getUserData().branchIds);
+      allow create, update: if isAdmin() ||
+        (request.resource.data.reportId is string
+          && canManagerEditReport(request.resource.data.reportId)
+          && request.resource.data.branchId == getReportData(request.resource.data.reportId).branchId);
+      allow delete: if isAdmin() ||
+        (resource.data.reportId is string
+          && canManagerEditReport(resource.data.reportId)
+          && resource.data.branchId == getReportData(resource.data.reportId).branchId);
     }
 
     // ─── reportComments ──────────────────────────────────────────────────
@@ -141,7 +165,10 @@ service cloud.firestore {
       allow create: if isActive()
         && request.resource.data.authorUid == uid()
         && request.resource.data.reportId is string
-        && request.resource.data.content is string;
+        && request.resource.data.content is string
+        && (isAdmin() ||
+          (isActiveManager()
+            && getReportData(request.resource.data.reportId).branchId in getUserData().branchIds));
       allow update, delete: if isAdmin();
     }
 

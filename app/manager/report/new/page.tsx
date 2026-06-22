@@ -295,7 +295,9 @@ export default function NewReportPage() {
     if (!canEditReport) return;
     setSaving(true);
     try {
-      const rid = await upsertReport(selectedBranchId, today, user.uid, collectData(), "submitted");
+      const editableStatus = existing?.status === "revision_required" ? "revision_required" : "draft";
+      const reportData = collectData();
+      const rid = await upsertReport(selectedBranchId, today, user.uid, reportData, editableStatus);
       // Save issues
       const activeIssues = issues
         .filter((iss) => iss.hasIssue && iss.description)
@@ -315,6 +317,7 @@ export default function NewReportPage() {
           await upsertCampaignResult(c.id, rid, selectedBranchId, today, metrics);
         }
       }
+      await upsertReport(selectedBranchId, today, user.uid, reportData, "submitted");
       router.push("/manager/reports");
     } finally {
       setSaving(false);
