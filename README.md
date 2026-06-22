@@ -248,3 +248,5 @@ npm run typecheck   # TypeScript 타입 검사
 npm run lint        # ESLint
 npm run build       # 프로덕션 빌드
 ```
+
+<!-- deploy test: 2026-06-22 21:56:37 -->
