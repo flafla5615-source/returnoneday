@@ -46,3 +46,6 @@ serviceAccountKey.json
 firebase-adminsdk*.json
 
 .vercel
+
+# Claude Code
+.claude
