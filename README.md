@@ -98,34 +98,52 @@ firebase deploy --only firestore:indexes
 ## 첫 번째 관리자 계정 만들기
 
 > ⚠️ 관리자 계정은 회원가입 화면에서 만들 수 없습니다.  
-> 반드시 아래 순서를 따르세요.
+> 스크립트 또는 아래 수동 방법으로 생성하세요.
 
-**Step 1 — Firebase Auth에서 계정 생성**
+### 방법 A — 스크립트로 생성 (권장)
 
-Firebase Console → **Authentication** → **사용자 추가**  
-→ 이메일/비밀번호 입력 후 생성  
-→ 생성된 **UID** 복사
+**Step 1 — Firebase Auth에 계정이 없으면 먼저 생성**
 
-**Step 2 — Firestore에 사용자 문서 수동 생성**
+Firebase Console → **Authentication** → **사용자 추가** → 이메일/비밀번호 입력
 
-Firebase Console → **Firestore Database** → `users` 컬렉션 → **문서 추가**  
-→ 문서 ID: 위에서 복사한 UID  
-→ 아래 필드를 입력:
+**Step 2 — 서비스 계정 키 준비**
+
+Firebase Console → 프로젝트 설정(⚙️) → **서비스 계정** → **새 비공개 키 생성**  
+→ 다운로드된 JSON 파일을 프로젝트 루트에 `serviceAccountKey.json`으로 저장  
+→ ⚠️ 이 파일은 `.gitignore`에 등록되어 있어 GitHub에 업로드되지 않습니다
+
+**Step 3 — 스크립트 실행**
+
+`scripts/create-admin.ts` 상단의 `ADMIN_UID`, `ADMIN_EMAIL`, `ADMIN_NAME` 값을 실제 값으로 수정한 뒤:
+
+```bash
+npm run create-admin
+```
+
+이미 문서가 있으면 현재 값을 출력하고 덮어씁니다.
+
+**Step 4 — 로그인 확인**
+
+`http://localhost:3000/login`에서 로그인 → `/admin`으로 이동하면 성공
+
+---
+
+### 방법 B — Firebase Console에서 수동 생성
+
+Firebase Console → **Firestore** → `users` 컬렉션 → **문서 추가**  
+→ 문서 ID: Firebase Auth UID  
+→ 아래 필드 입력:
 
 | 필드 | 타입 | 값 |
 |------|------|----|
-| `uid` | string | (UID 값) |
-| `name` | string | 관리자 |
-| `email` | string | (가입한 이메일) |
+| `uid` | string | (Auth UID) |
+| `name` | string | 관리자 이름 |
+| `email` | string | 이메일 |
 | `role` | string | `admin` |
 | `status` | string | `active` |
 | `branchIds` | array | (비워두기) |
-| `createdAt` | timestamp | (현재 시각) |
-| `updatedAt` | timestamp | (현재 시각) |
-
-**Step 3 — 로그인 확인**
-
-`http://localhost:3000/login`에서 로그인 → `/admin`으로 자동 이동하면 성공
+| `createdAt` | timestamp | 현재 시각 |
+| `updatedAt` | timestamp | 현재 시각 |
 
 ---
 
