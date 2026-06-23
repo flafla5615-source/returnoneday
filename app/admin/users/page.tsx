@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getAllUsers, updateUserProfile, approveUser } from "@/services/users";
+import { getAllUsers, updateUserProfileWithBranchAssignments } from "@/services/users";
 import { getAllBranches } from "@/services/branches";
 import LoadingState from "@/components/common/LoadingState";
 import EmptyState from "@/components/common/EmptyState";
@@ -49,13 +49,32 @@ export default function AdminUsersPage() {
 
   async function saveEdit() {
     if (!editUser) return;
+    const nextBranchIds = editRole === "branch_manager" ? editBranchIds : [];
     setSaving(true);
-    await approveUser(editUser.uid, editName, editRole, editBranchIds);
-    await updateUserProfile(editUser.uid, { status: editStatus });
+    await updateUserProfileWithBranchAssignments(editUser.uid, {
+      name: editName,
+      role: editRole,
+      status: editStatus,
+      branchIds: nextBranchIds,
+    });
+    setBranches((prev) =>
+      prev.map((branch) => {
+        const hasUser = branch.managerUids.includes(editUser.uid);
+        const shouldHaveUser = nextBranchIds.includes(branch.id);
+        if (hasUser === shouldHaveUser) return branch;
+
+        return {
+          ...branch,
+          managerUids: shouldHaveUser
+            ? [...branch.managerUids, editUser.uid]
+            : branch.managerUids.filter((uid) => uid !== editUser.uid),
+        };
+      })
+    );
     setUsers((prev) =>
       prev.map((u) =>
         u.uid === editUser.uid
-          ? { ...u, name: editName, role: editRole, status: editStatus, branchIds: editBranchIds }
+          ? { ...u, name: editName, role: editRole, status: editStatus, branchIds: nextBranchIds }
           : u
       )
     );
@@ -148,7 +167,11 @@ export default function AdminUsersPage() {
 
             <div>
               <label className="text-xs font-medium text-gray-700 block mb-2">담당 지점</label>
-              <div className="max-h-40 overflow-y-auto space-y-1 border border-gray-200 rounded-lg p-2">
+              <div
+                className={`max-h-40 overflow-y-auto space-y-1 border border-gray-200 rounded-lg p-2 ${
+                  editRole === "admin" ? "opacity-50 pointer-events-none" : ""
+                }`}
+              >
                 {branches.map((b) => (
                   <label key={b.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 rounded p-1">
                     <input

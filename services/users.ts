@@ -8,6 +8,7 @@ import {
   where,
   Timestamp,
   orderBy,
+  writeBatch,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { UserProfile, UserRole, UserStatus } from "@/types";
@@ -38,13 +39,49 @@ export async function approveUser(
   role: UserRole,
   branchIds: string[]
 ): Promise<void> {
-  await updateDoc(doc(db, "users", uid), {
+  await updateUserProfileWithBranchAssignments(uid, {
     name,
     role,
     status: "active" as UserStatus,
     branchIds,
-    updatedAt: Timestamp.now(),
   });
+}
+
+export async function updateUserProfileWithBranchAssignments(
+  uid: string,
+  updates: Pick<UserProfile, "name" | "role" | "status" | "branchIds">
+): Promise<void> {
+  const targetBranchIds = new Set(updates.branchIds);
+  const branchesSnap = await getDocs(collection(db, "branches"));
+  const now = Timestamp.now();
+  const batch = writeBatch(db);
+
+  batch.update(doc(db, "users", uid), {
+    ...updates,
+    updatedAt: now,
+  });
+
+  branchesSnap.docs.forEach((branchDoc) => {
+    const data = branchDoc.data();
+    const managerUids = Array.isArray(data.managerUids)
+      ? (data.managerUids as string[])
+      : [];
+    const shouldHaveUser = targetBranchIds.has(branchDoc.id);
+    const hasUser = managerUids.includes(uid);
+
+    if (shouldHaveUser === hasUser) return;
+
+    const nextManagerUids = shouldHaveUser
+      ? [...managerUids, uid]
+      : managerUids.filter((managerUid) => managerUid !== uid);
+
+    batch.update(doc(db, "branches", branchDoc.id), {
+      managerUids: nextManagerUids,
+      updatedAt: now,
+    });
+  });
+
+  await batch.commit();
 }
 
 export async function getPendingUsers(): Promise<UserProfile[]> {
