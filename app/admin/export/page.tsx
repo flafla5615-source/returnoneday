@@ -4,10 +4,21 @@ import { useMemo, useState } from "react";
 import { format, subDays } from "date-fns";
 import { DownloadIcon } from "lucide-react";
 import { getAllBranches } from "@/services/branches";
+import { getAllCampaigns, getCampaignResultsByDateRange } from "@/services/campaigns";
+import { getAllIssues } from "@/services/issues";
 import { getAllReports } from "@/services/reports";
 import { getAllUsers } from "@/services/users";
 import { calcPtConversionRate, formatDate, todayYMD } from "@/lib/utils";
-import type { Branch, DailyReport, ReportStatus, UserProfile } from "@/types";
+import type { Worksheet } from "exceljs";
+import type {
+  Branch,
+  Campaign,
+  CampaignResult,
+  DailyReport,
+  Issue,
+  ReportStatus,
+  UserProfile,
+} from "@/types";
 
 const statusLabel: Record<ReportStatus, string> = {
   draft: "임시저장",
@@ -44,6 +55,51 @@ const exportColumns = [
   { header: "수정 시간", key: "updatedAt", width: 22 },
 ];
 
+const issueColumns = [
+  { header: "날짜", key: "date", width: 14 },
+  { header: "브랜드", key: "brand", width: 16 },
+  { header: "지역", key: "region", width: 16 },
+  { header: "지점명", key: "branchName", width: 22 },
+  { header: "유형", key: "type", width: 12 },
+  { header: "카테고리", key: "category", width: 18 },
+  { header: "중요도", key: "severity", width: 12 },
+  { header: "처리 상태", key: "status", width: 12 },
+  { header: "내용", key: "description", width: 40 },
+  { header: "메모", key: "memo", width: 28 },
+  { header: "생성 시간", key: "createdAt", width: 22 },
+  { header: "해결 시간", key: "resolvedAt", width: 22 },
+];
+
+const campaignResultColumns = [
+  { header: "날짜", key: "date", width: 14 },
+  { header: "브랜드", key: "brand", width: 16 },
+  { header: "지역", key: "region", width: 16 },
+  { header: "지점명", key: "branchName", width: 22 },
+  { header: "캠페인", key: "campaignName", width: 24 },
+  { header: "지표", key: "metricLabel", width: 20 },
+  { header: "값", key: "metricValue", width: 12 },
+  { header: "수정 시간", key: "updatedAt", width: 22 },
+];
+
+const issueTypeLabel: Record<Issue["type"], string> = {
+  claim: "클레임",
+  staff: "인력",
+  facility: "시설",
+};
+
+const issueSeverityLabel: Record<Issue["severity"], string> = {
+  low: "낮음",
+  medium: "중간",
+  high: "높음",
+  critical: "긴급",
+};
+
+const issueStatusLabel: Record<Issue["status"], string> = {
+  open: "미해결",
+  in_progress: "처리 중",
+  resolved: "해결됨",
+};
+
 function uniqueSorted(values: Array<string | undefined>) {
   return Array.from(new Set(values.filter(Boolean) as string[])).sort((a, b) =>
     a.localeCompare(b, "ko-KR")
@@ -54,6 +110,29 @@ function toKoreanDateTime(date?: { toDate: () => Date }) {
   return date
     ? date.toDate().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })
     : "";
+}
+
+function styleWorksheet(sheet: Worksheet) {
+  const headerRow = sheet.getRow(1);
+  headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+  headerRow.fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "FF1E3A5F" },
+  };
+  headerRow.alignment = { vertical: "middle", horizontal: "center" };
+
+  sheet.eachRow((row) => {
+    row.eachCell((cell) => {
+      cell.border = {
+        top: { style: "thin", color: { argb: "FFE5E7EB" } },
+        left: { style: "thin", color: { argb: "FFE5E7EB" } },
+        bottom: { style: "thin", color: { argb: "FFE5E7EB" } },
+        right: { style: "thin", color: { argb: "FFE5E7EB" } },
+      };
+      cell.alignment = { vertical: "middle" };
+    });
+  });
 }
 
 export default function AdminExportPage() {
@@ -112,14 +191,18 @@ export default function AdminExportPage() {
         return;
       }
 
-      const [reports, bs, users] = await Promise.all([
+      const [reports, bs, users, issues, campaigns, campaignResults] = await Promise.all([
         getAllReports(fromDate, toDate),
         getAllBranches(),
         getAllUsers(),
+        getAllIssues({ fromDate, toDate }),
+        getAllCampaigns(),
+        getCampaignResultsByDateRange(fromDate, toDate),
       ]);
 
       const branchMap = Object.fromEntries(bs.map((branch) => [branch.id, branch]));
       const userMap = Object.fromEntries(users.map((user: UserProfile) => [user.uid, user]));
+      const campaignMap = Object.fromEntries(campaigns.map((campaign) => [campaign.id, campaign]));
 
       const filtered = reports.filter((report) => {
         const branch = branchMap[report.branchId];
@@ -130,8 +213,28 @@ export default function AdminExportPage() {
         return true;
       });
 
-      if (filtered.length === 0) {
-        setError("선택한 조건에 해당하는 보고 데이터가 없습니다.");
+      const filteredIssues = issues.filter((issue) => {
+        const branch = branchMap[issue.branchId];
+        if (selectedBranch && issue.branchId !== selectedBranch) return false;
+        if (selectedBrand && branch?.brand !== selectedBrand) return false;
+        if (selectedRegion && branch?.region !== selectedRegion) return false;
+        return true;
+      });
+
+      const filteredCampaignResults = campaignResults.filter((result) => {
+        const branch = branchMap[result.branchId];
+        if (selectedBranch && result.branchId !== selectedBranch) return false;
+        if (selectedBrand && branch?.brand !== selectedBrand) return false;
+        if (selectedRegion && branch?.region !== selectedRegion) return false;
+        return true;
+      });
+
+      if (
+        filtered.length === 0 &&
+        filteredIssues.length === 0 &&
+        filteredCampaignResults.length === 0
+      ) {
+        setError("선택한 조건에 해당하는 보고, 이슈, 캠페인 실적 데이터가 없습니다.");
         return;
       }
 
@@ -177,26 +280,63 @@ export default function AdminExportPage() {
         });
       });
 
-      const headerRow = sheet.getRow(1);
-      headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
-      headerRow.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: "FF1E3A5F" },
-      };
-      headerRow.alignment = { vertical: "middle", horizontal: "center" };
+      styleWorksheet(sheet);
 
-      sheet.eachRow((row) => {
-        row.eachCell((cell) => {
-          cell.border = {
-            top: { style: "thin", color: { argb: "FFE5E7EB" } },
-            left: { style: "thin", color: { argb: "FFE5E7EB" } },
-            bottom: { style: "thin", color: { argb: "FFE5E7EB" } },
-            right: { style: "thin", color: { argb: "FFE5E7EB" } },
-          };
-          cell.alignment = { vertical: "middle" };
+      if (filteredIssues.length > 0) {
+        const issueSheet = workbook.addWorksheet("운영 이슈");
+        issueSheet.columns = issueColumns;
+        issueSheet.views = [{ state: "frozen", ySplit: 1 }];
+
+        filteredIssues.forEach((issue: Issue) => {
+          const branch = branchMap[issue.branchId];
+          issueSheet.addRow({
+            date: formatDate(issue.reportDate),
+            brand: branch?.brand ?? "",
+            region: branch?.region ?? "",
+            branchName: branch?.name ?? issue.branchId,
+            type: issueTypeLabel[issue.type],
+            category: issue.category,
+            severity: issueSeverityLabel[issue.severity],
+            status: issueStatusLabel[issue.status],
+            description: issue.description,
+            memo: issue.memo ?? "",
+            createdAt: toKoreanDateTime(issue.createdAt),
+            resolvedAt: toKoreanDateTime(issue.resolvedAt),
+          });
         });
-      });
+
+        styleWorksheet(issueSheet);
+      }
+
+      if (filteredCampaignResults.length > 0) {
+        const campaignSheet = workbook.addWorksheet("캠페인 실적");
+        campaignSheet.columns = campaignResultColumns;
+        campaignSheet.views = [{ state: "frozen", ySplit: 1 }];
+
+        filteredCampaignResults.forEach((result: CampaignResult) => {
+          const branch = branchMap[result.branchId];
+          const campaign = campaignMap[result.campaignId] as Campaign | undefined;
+
+          Object.entries(result.metrics).forEach(([metricKey, value]) => {
+            const metricLabel =
+              campaign?.metricDefinitions.find((metric) => metric.key === metricKey)?.label ??
+              metricKey;
+
+            campaignSheet.addRow({
+              date: formatDate(result.reportDate),
+              brand: branch?.brand ?? "",
+              region: branch?.region ?? "",
+              branchName: branch?.name ?? result.branchId,
+              campaignName: campaign?.name ?? result.campaignId,
+              metricLabel,
+              metricValue: value ?? "",
+              updatedAt: toKoreanDateTime(result.updatedAt),
+            });
+          });
+        });
+
+        styleWorksheet(campaignSheet);
+      }
 
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], {

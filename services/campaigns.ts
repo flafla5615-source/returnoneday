@@ -95,6 +95,21 @@ export async function getCampaignResults(campaignId: string): Promise<CampaignRe
   return snap.docs.map((d) => d.data() as CampaignResult);
 }
 
+export async function getCampaignResultsByDateRange(
+  fromDate: string,
+  toDate: string
+): Promise<CampaignResult[]> {
+  const snap = await getDocs(
+    query(
+      collection(db, "campaignResults"),
+      where("reportDate", ">=", fromDate),
+      where("reportDate", "<=", toDate),
+      orderBy("reportDate", "asc")
+    )
+  );
+  return snap.docs.map((d) => d.data() as CampaignResult);
+}
+
 export async function getCampaignResultByReport(
   campaignId: string,
   reportId: string
