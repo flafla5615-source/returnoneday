@@ -1,22 +1,3 @@
-/**
- * Firestore Security Rules 테스트
- *
- * 실행 방법:
- *   1. Firebase 에뮬레이터 실행:
- *      firebase emulators:start --only firestore
- *   2. 테스트 실행:
- *      npx jest tests/firestore.rules.test.ts
- *
- * 테스트 케이스:
- *   1. 비로그인 사용자 — 모든 컬렉션 읽기 거부
- *   2. pending 지점장 — campaigns 읽기 거부 (active 아님)
- *   3. active 지점장 — 자신의 지점 dailyReport 읽기 허용
- *   4. active 지점장 — 타 지점 dailyReport 읽기 거부
- *   5. active 지점장 — locked 보고 수정 거부
- *   6. admin — 모든 보고 상태 변경 허용
- *   7. 회원가입 시 role=admin 강제 생성 거부
- */
-
 import {
   assertFails,
   assertSucceeds,
@@ -26,25 +7,41 @@ import {
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import {
+  collection,
   doc,
   getDoc,
+  getDocs,
+  query,
+  serverTimestamp,
   setDoc,
   updateDoc,
-  collection,
-  getDocs,
+  where,
 } from "firebase/firestore";
 
 const PROJECT_ID = "returnoneday-test";
 const RULES_PATH = resolve(__dirname, "../firestore.rules");
 
-const BRANCH_ID = "jf_city";
-const OTHER_BRANCH_ID = "jf_other";
+const BRANCH_ID = "gymflix_sicheong";
+const OTHER_BRANCH_ID = "gymflix_newjinju_station";
 const ADMIN_UID = "admin_001";
-const MANAGER_UID = "mgr_001";
-const PENDING_MANAGER_UID = "mgr_pending";
-const OTHER_MANAGER_UID = "mgr_002";
+const MANAGER_UID = "manager_001";
+const MULTI_MANAGER_UID = "manager_multi";
+const PENDING_MANAGER_UID = "manager_pending";
+const OTHER_MANAGER_UID = "manager_002";
 
 let testEnv: RulesTestEnvironment;
+
+function authedDb(uid: string) {
+  return testEnv.authenticatedContext(uid).firestore();
+}
+
+function unauthDb() {
+  return testEnv.unauthenticatedContext().firestore();
+}
+
+function reportId(branchId: string, date: string) {
+  return `${branchId}_${date}`;
+}
 
 beforeAll(async () => {
   testEnv = await initializeTestEnvironment({
@@ -56,226 +53,364 @@ beforeAll(async () => {
     },
   });
 
-  // 초기 데이터 세팅 (Rules 비활성화 상태로)
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
     const db = ctx.firestore();
 
-    // 관리자
     await setDoc(doc(db, "users", ADMIN_UID), {
       uid: ADMIN_UID,
-      name: "관리자",
+      name: "Admin",
       email: "admin@test.com",
       role: "admin",
       status: "active",
       branchIds: [],
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
     });
 
-    // active 지점장
     await setDoc(doc(db, "users", MANAGER_UID), {
       uid: MANAGER_UID,
-      name: "김지점",
-      email: "mgr@test.com",
+      name: "Branch Manager",
+      email: "manager@test.com",
       role: "branch_manager",
       status: "active",
       branchIds: [BRANCH_ID],
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
     });
 
-    // pending 지점장
+    await setDoc(doc(db, "users", MULTI_MANAGER_UID), {
+      uid: MULTI_MANAGER_UID,
+      name: "Multi Branch Manager",
+      email: "multi@test.com",
+      role: "branch_manager",
+      status: "active",
+      branchIds: [BRANCH_ID, OTHER_BRANCH_ID],
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
     await setDoc(doc(db, "users", PENDING_MANAGER_UID), {
       uid: PENDING_MANAGER_UID,
-      name: "이지점",
+      name: "Pending Manager",
       email: "pending@test.com",
       role: "branch_manager",
       status: "pending",
-      branchIds: [BRANCH_ID],
+      branchIds: [],
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
     });
 
-    // 타 지점 지점장
     await setDoc(doc(db, "users", OTHER_MANAGER_UID), {
       uid: OTHER_MANAGER_UID,
-      name: "박지점",
+      name: "Other Manager",
       email: "other@test.com",
       role: "branch_manager",
       status: "active",
       branchIds: [OTHER_BRANCH_ID],
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
     });
 
-    // 지점
     await setDoc(doc(db, "branches", BRANCH_ID), {
       id: BRANCH_ID,
-      name: "짐플릭스 시청점",
-      brand: "짐플릭스",
+      name: "Gymflix Sicheong",
+      brand: "Gymflix",
+      region: "Jinju",
       active: true,
+      managerUids: [MANAGER_UID, MULTI_MANAGER_UID],
+      sortOrder: 1,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
     });
 
-    // submitted 보고
-    await setDoc(doc(db, "dailyReports", `${BRANCH_ID}_2026-06-01`), {
-      id: `${BRANCH_ID}_2026-06-01`,
+    await setDoc(doc(db, "branches", OTHER_BRANCH_ID), {
+      id: OTHER_BRANCH_ID,
+      name: "Gymflix New Jinju Station",
+      brand: "Gymflix",
+      region: "Jinju",
+      active: true,
+      managerUids: [OTHER_MANAGER_UID, MULTI_MANAGER_UID],
+      sortOrder: 2,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    await setDoc(doc(db, "dailyReports", reportId(BRANCH_ID, "2026-06-01")), {
+      id: reportId(BRANCH_ID, "2026-06-01"),
       branchId: BRANCH_ID,
       reportDate: "2026-06-01",
       writerUid: MANAGER_UID,
       status: "submitted",
       activeMembers: 300,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      submittedAt: serverTimestamp(),
     });
 
-    // locked 보고
-    await setDoc(doc(db, "dailyReports", `${BRANCH_ID}_2026-06-02`), {
-      id: `${BRANCH_ID}_2026-06-02`,
+    await setDoc(doc(db, "dailyReports", reportId(BRANCH_ID, "2026-06-02")), {
+      id: reportId(BRANCH_ID, "2026-06-02"),
       branchId: BRANCH_ID,
       reportDate: "2026-06-02",
       writerUid: MANAGER_UID,
       status: "locked",
       activeMembers: 310,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
     });
 
-    // 캠페인
+    await setDoc(
+      doc(db, "dailyReports", reportId(OTHER_BRANCH_ID, "2026-06-01")),
+      {
+        id: reportId(OTHER_BRANCH_ID, "2026-06-01"),
+        branchId: OTHER_BRANCH_ID,
+        reportDate: "2026-06-01",
+        writerUid: OTHER_MANAGER_UID,
+        status: "submitted",
+        activeMembers: 120,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        submittedAt: serverTimestamp(),
+      }
+    );
+
     await setDoc(doc(db, "campaigns", "campaign_001"), {
       id: "campaign_001",
-      name: "테스트 캠페인",
+      name: "Summer Campaign",
       status: "active",
+      startDate: "2026-06-01",
+      endDate: "2026-06-30",
+      targetBranchIds: [BRANCH_ID, OTHER_BRANCH_ID],
+      metricDefinitions: [{ key: "leads", label: "Leads" }],
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
     });
   });
 });
 
 afterAll(async () => {
-  if (testEnv) {
-    await testEnv.cleanup();
-  }
+  await testEnv.cleanup();
 });
 
-// ─── 1. 비로그인 사용자 — 모든 읽기 거부 ─────────────────────────────────
-describe("Case 1: 비로그인 사용자", () => {
-  test("users 읽기 거부", async () => {
-    const unauth = testEnv.unauthenticatedContext();
-    await assertFails(getDoc(doc(unauth.firestore(), "users", MANAGER_UID)));
-  });
+describe("unauthenticated access", () => {
+  test("cannot read protected collections", async () => {
+    const db = unauthDb();
 
-  test("dailyReports 읽기 거부", async () => {
-    const unauth = testEnv.unauthenticatedContext();
+    await assertFails(getDoc(doc(db, "users", MANAGER_UID)));
+    await assertFails(getDoc(doc(db, "branches", BRANCH_ID)));
     await assertFails(
-      getDoc(doc(unauth.firestore(), "dailyReports", `${BRANCH_ID}_2026-06-01`))
+      getDoc(doc(db, "dailyReports", reportId(BRANCH_ID, "2026-06-01")))
     );
+    await assertFails(getDoc(doc(db, "campaigns", "campaign_001")));
   });
+});
 
-  test("campaigns 읽기 거부", async () => {
-    const unauth = testEnv.unauthenticatedContext();
+describe("signup and pending manager access", () => {
+  test("new users can only create a pending branch manager profile for themselves", async () => {
+    const newUid = "new_signup_user";
+    const db = authedDb(newUid);
+
     await assertFails(
-      getDoc(doc(unauth.firestore(), "campaigns", "campaign_001"))
-    );
-  });
-});
-
-// ─── 2. pending 지점장 — campaigns 읽기 거부 ─────────────────────────────
-describe("Case 2: pending 지점장", () => {
-  test("campaigns 읽기 거부 (status=pending → isActive() 실패)", async () => {
-    const ctx = testEnv.authenticatedContext(PENDING_MANAGER_UID);
-    await assertFails(
-      getDoc(doc(ctx.firestore(), "campaigns", "campaign_001"))
-    );
-  });
-
-  test("자신의 users 문서 읽기는 허용 (any auth)", async () => {
-    const ctx = testEnv.authenticatedContext(PENDING_MANAGER_UID);
-    await assertSucceeds(
-      getDoc(doc(ctx.firestore(), "users", PENDING_MANAGER_UID))
-    );
-  });
-});
-
-// ─── 3. active 지점장 — 자신의 지점 dailyReport 읽기 허용 ────────────────
-describe("Case 3: active 지점장 — 자기 지점 보고 접근", () => {
-  test("담당 지점 보고 읽기 허용", async () => {
-    const ctx = testEnv.authenticatedContext(MANAGER_UID);
-    await assertSucceeds(
-      getDoc(
-        doc(ctx.firestore(), "dailyReports", `${BRANCH_ID}_2026-06-01`)
-      )
-    );
-  });
-
-  test("campaigns 읽기 허용 (active)", async () => {
-    const ctx = testEnv.authenticatedContext(MANAGER_UID);
-    await assertSucceeds(
-      getDoc(doc(ctx.firestore(), "campaigns", "campaign_001"))
-    );
-  });
-});
-
-// ─── 4. active 지점장 — 타 지점 dailyReport 읽기 거부 ────────────────────
-describe("Case 4: active 지점장 — 타 지점 보고 접근 거부", () => {
-  test("타 지점 보고 읽기 거부", async () => {
-    const ctx = testEnv.authenticatedContext(OTHER_MANAGER_UID);
-    await assertFails(
-      getDoc(
-        doc(ctx.firestore(), "dailyReports", `${BRANCH_ID}_2026-06-01`)
-      )
-    );
-  });
-});
-
-// ─── 5. active 지점장 — locked 보고 수정 거부 ────────────────────────────
-describe("Case 5: locked 보고 수정 거부", () => {
-  test("locked 상태 보고 updateDoc 거부", async () => {
-    const ctx = testEnv.authenticatedContext(MANAGER_UID);
-    await assertFails(
-      updateDoc(
-        doc(ctx.firestore(), "dailyReports", `${BRANCH_ID}_2026-06-02`),
-        { activeMembers: 999 }
-      )
-    );
-  });
-});
-
-// ─── 6. admin — 모든 보고 읽기/상태 변경 허용 ────────────────────────────
-describe("Case 6: admin 권한", () => {
-  test("모든 지점 보고 읽기 허용", async () => {
-    const ctx = testEnv.authenticatedContext(ADMIN_UID);
-    await assertSucceeds(
-      getDoc(
-        doc(ctx.firestore(), "dailyReports", `${BRANCH_ID}_2026-06-01`)
-      )
-    );
-  });
-
-  test("locked 보고도 updateDoc 허용", async () => {
-    const ctx = testEnv.authenticatedContext(ADMIN_UID);
-    await assertSucceeds(
-      updateDoc(
-        doc(ctx.firestore(), "dailyReports", `${BRANCH_ID}_2026-06-02`),
-        { status: "submitted" }
-      )
-    );
-  });
-});
-
-// ─── 7. 회원가입 시 role=admin 강제 생성 거부 ────────────────────────────
-describe("Case 7: 회원가입 보안 검증", () => {
-  const NEW_UID = "new_user_attempt_admin";
-
-  test("role=admin으로 users 문서 생성 거부", async () => {
-    const ctx = testEnv.authenticatedContext(NEW_UID);
-    await assertFails(
-      setDoc(doc(ctx.firestore(), "users", NEW_UID), {
-        uid: NEW_UID,
-        name: "악의적 관리자",
-        email: "evil@test.com",
-        role: "admin",           // admin 강제 시도
-        status: "active",        // active 강제 시도
+      setDoc(doc(db, "users", newUid), {
+        uid: newUid,
+        name: "Attempted Admin",
+        email: "attempted-admin@test.com",
+        role: "admin",
+        status: "active",
         branchIds: [],
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    );
+
+    await assertSucceeds(
+      setDoc(doc(db, "users", newUid), {
+        uid: newUid,
+        name: "Pending Signup",
+        email: "pending-signup@test.com",
+        role: "branch_manager",
+        status: "pending",
+        branchIds: [],
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       })
     );
   });
 
-  test("role=branch_manager, status=pending으로만 생성 허용", async () => {
-    const ctx = testEnv.authenticatedContext(NEW_UID);
+  test("pending managers can read their own profile but cannot read active-only data", async () => {
+    const db = authedDb(PENDING_MANAGER_UID);
+
+    await assertSucceeds(getDoc(doc(db, "users", PENDING_MANAGER_UID)));
+    await assertFails(getDoc(doc(db, "campaigns", "campaign_001")));
+    await assertFails(getDoc(doc(db, "branches", BRANCH_ID)));
+  });
+
+  test("users cannot approve themselves or assign branches", async () => {
+    const db = authedDb(PENDING_MANAGER_UID);
+
+    await assertFails(
+      updateDoc(doc(db, "users", PENDING_MANAGER_UID), {
+        status: "active",
+      })
+    );
+    await assertFails(
+      updateDoc(doc(db, "users", PENDING_MANAGER_UID), {
+        branchIds: [BRANCH_ID],
+      })
+    );
+  });
+});
+
+describe("branch manager report access", () => {
+  test("active managers can read their own branch data", async () => {
+    const db = authedDb(MANAGER_UID);
+
+    await assertSucceeds(getDoc(doc(db, "branches", BRANCH_ID)));
     await assertSucceeds(
-      setDoc(doc(ctx.firestore(), "users", NEW_UID), {
-        uid: NEW_UID,
-        name: "정상 가입자",
-        email: "normal@test.com",
-        role: "branch_manager",  // 올바른 role
-        status: "pending",       // 올바른 초기 status
-        branchIds: [],
+      getDoc(doc(db, "dailyReports", reportId(BRANCH_ID, "2026-06-01")))
+    );
+    await assertSucceeds(getDoc(doc(db, "campaigns", "campaign_001")));
+  });
+
+  test("active managers cannot directly read another branch report", async () => {
+    const db = authedDb(MANAGER_UID);
+
+    await assertFails(
+      getDoc(
+        doc(db, "dailyReports", reportId(OTHER_BRANCH_ID, "2026-06-01"))
+      )
+    );
+  });
+
+  test("active managers can query only their own branch reports", async () => {
+    const db = authedDb(MANAGER_UID);
+
+    await assertSucceeds(
+      getDocs(
+        query(
+          collection(db, "dailyReports"),
+          where("branchId", "==", BRANCH_ID)
+        )
+      )
+    );
+    await assertFails(
+      getDocs(
+        query(
+          collection(db, "dailyReports"),
+          where("branchId", "==", OTHER_BRANCH_ID)
+        )
+      )
+    );
+  });
+
+  test("multi-branch managers can read each assigned branch", async () => {
+    const db = authedDb(MULTI_MANAGER_UID);
+
+    await assertSucceeds(getDoc(doc(db, "branches", BRANCH_ID)));
+    await assertSucceeds(getDoc(doc(db, "branches", OTHER_BRANCH_ID)));
+    await assertSucceeds(
+      getDoc(doc(db, "dailyReports", reportId(BRANCH_ID, "2026-06-01")))
+    );
+    await assertSucceeds(
+      getDoc(
+        doc(db, "dailyReports", reportId(OTHER_BRANCH_ID, "2026-06-01"))
+      )
+    );
+  });
+
+  test("active managers can get a missing assigned-branch report before creating it", async () => {
+    const db = authedDb(MANAGER_UID);
+
+    await assertSucceeds(
+      getDoc(doc(db, "dailyReports", reportId(BRANCH_ID, "2026-06-10")))
+    );
+  });
+
+  test("active managers can create and submit draft reports for assigned branches only", async () => {
+    const db = authedDb(MANAGER_UID);
+    const newReportId = reportId(BRANCH_ID, "2026-06-11");
+
+    await assertSucceeds(
+      setDoc(doc(db, "dailyReports", newReportId), {
+        id: newReportId,
+        branchId: BRANCH_ID,
+        reportDate: "2026-06-11",
+        writerUid: MANAGER_UID,
+        status: "draft",
+        activeMembers: 320,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    );
+
+    await assertSucceeds(
+      updateDoc(doc(db, "dailyReports", newReportId), {
+        activeMembers: 321,
+        status: "submitted",
+        updatedAt: serverTimestamp(),
+        submittedAt: serverTimestamp(),
+      })
+    );
+
+    const otherReportId = reportId(OTHER_BRANCH_ID, "2026-06-11");
+    await assertFails(
+      setDoc(doc(db, "dailyReports", otherReportId), {
+        id: otherReportId,
+        branchId: OTHER_BRANCH_ID,
+        reportDate: "2026-06-11",
+        writerUid: MANAGER_UID,
+        status: "draft",
+        activeMembers: 200,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    );
+  });
+
+  test("managers cannot edit submitted or locked reports unless revision is requested", async () => {
+    const db = authedDb(MANAGER_UID);
+
+    await assertFails(
+      updateDoc(doc(db, "dailyReports", reportId(BRANCH_ID, "2026-06-01")), {
+        activeMembers: 999,
+      })
+    );
+    await assertFails(
+      updateDoc(doc(db, "dailyReports", reportId(BRANCH_ID, "2026-06-02")), {
+        activeMembers: 999,
+      })
+    );
+  });
+});
+
+describe("admin access", () => {
+  test("admins can read and update reports across branches", async () => {
+    const db = authedDb(ADMIN_UID);
+
+    await assertSucceeds(
+      getDoc(doc(db, "dailyReports", reportId(BRANCH_ID, "2026-06-01")))
+    );
+    await assertSucceeds(
+      getDoc(
+        doc(db, "dailyReports", reportId(OTHER_BRANCH_ID, "2026-06-01"))
+      )
+    );
+    await assertSucceeds(
+      updateDoc(doc(db, "dailyReports", reportId(BRANCH_ID, "2026-06-02")), {
+        status: "revision_required",
+        reviewedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    );
+  });
+
+  test("admins can approve users and assign branches", async () => {
+    const db = authedDb(ADMIN_UID);
+
+    await assertSucceeds(
+      updateDoc(doc(db, "users", PENDING_MANAGER_UID), {
+        status: "active",
+        branchIds: [BRANCH_ID],
+        updatedAt: serverTimestamp(),
       })
     );
   });

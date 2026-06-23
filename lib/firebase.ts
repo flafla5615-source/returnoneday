@@ -20,6 +20,13 @@ if (missing.length > 0) {
   );
 }
 
+if (process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID !== "returnoneday") {
+  throw new Error(
+    `[Firebase] NEXT_PUBLIC_FIREBASE_PROJECT_ID must be "returnoneday", ` +
+      `received "${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}".`
+  );
+}
+
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN!,
