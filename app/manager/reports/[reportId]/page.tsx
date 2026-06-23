@@ -121,7 +121,7 @@ export default function ReportDetailPage() {
             </div>
           )}
           <Link
-            href="/manager/report/new"
+            href={`/manager/report/new?date=${report.reportDate}`}
             className="mt-2 inline-block px-4 py-2 bg-orange-600 text-white text-sm rounded-lg hover:bg-orange-700"
           >
             수정하기

@@ -3,12 +3,14 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { getReportById } from "@/services/reports";
+import { useAuth } from "@/contexts/AuthContext";
+import { getReportById, updateReportStatus } from "@/services/reports";
 import { getIssuesByReport } from "@/services/issues";
+import { getBranchesByIds } from "@/services/branches";
 import { ReportStatusBadge, SeverityBadge, IssueStatusBadge } from "@/components/common/StatusBadge";
 import LoadingState from "@/components/common/LoadingState";
 import { formatDate, formatDateTime, calcPtConversionRate, formatPercent } from "@/lib/utils";
-import type { DailyReport, Issue } from "@/types";
+import type { DailyReport, Issue, ReportStatus } from "@/types";
 import { ChevronLeftIcon } from "lucide-react";
 
 function Row({ label, value }: { label: string; value: string | number }) {
@@ -25,21 +27,45 @@ const issueTypeLabel = (t: Issue["type"]) =>
 
 export default function AdminReportDetailPage() {
   const { reportId } = useParams<{ reportId: string }>();
+  const { profile } = useAuth();
   const [report, setReport] = useState<DailyReport | null | undefined>(undefined);
   const [issues, setIssues] = useState<Issue[]>([]);
+  const [branchName, setBranchName] = useState("");
+  const [actionLoading, setActionLoading] = useState(false);
+  const [comment, setComment] = useState("");
+  const [showRevisionModal, setShowRevisionModal] = useState(false);
 
   useEffect(() => {
     if (!reportId) return;
     Promise.all([getReportById(reportId), getIssuesByReport(reportId)]).then(([r, iss]) => {
       setReport(r);
       setIssues(iss);
+      if (r) {
+        getBranchesByIds([r.branchId]).then((bs) => setBranchName(bs[0]?.name ?? r.branchId));
+      }
     });
   }, [reportId]);
+
+  async function handleAction(newStatus: ReportStatus, adminComment?: string) {
+    if (!report || !profile) return;
+    setActionLoading(true);
+    try {
+      await updateReportStatus(report.id, newStatus, profile.uid, profile.name, adminComment);
+      setReport((prev) => prev ? { ...prev, status: newStatus } : prev);
+      setShowRevisionModal(false);
+      setComment("");
+    } finally {
+      setActionLoading(false);
+    }
+  }
 
   if (report === undefined) return <LoadingState />;
   if (!report) return <div className="p-6 text-gray-500">보고서를 찾을 수 없습니다.</div>;
 
   const convRate = calcPtConversionRate(report.ptConsultations, report.ptRegistrations);
+  const canRequestRevision = report.status === "submitted";
+  const canLock = report.status === "submitted" || report.status === "revision_required";
+  const canUnlock = report.status === "locked";
 
   return (
     <div className="max-w-2xl mx-auto space-y-4">
@@ -49,7 +75,7 @@ export default function AdminReportDetailPage() {
         </Link>
         <div className="flex-1">
           <h1 className="text-base font-bold text-gray-900">{formatDate(report.reportDate)} 보고서</h1>
-          <p className="text-xs text-gray-400">{report.branchId}</p>
+          <p className="text-xs text-gray-400">{branchName || report.branchId}</p>
         </div>
         <ReportStatusBadge status={report.status} />
       </div>
@@ -94,6 +120,70 @@ export default function AdminReportDetailPage() {
                 {iss.category && <p className="text-xs text-gray-400 mt-0.5">{iss.category}</p>}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {(canRequestRevision || canLock || canUnlock) && (
+        <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+          <p className="text-sm font-semibold text-gray-800 mb-3">관리자 액션</p>
+          <div className="flex flex-wrap gap-2">
+            {canRequestRevision && (
+              <button
+                onClick={() => setShowRevisionModal(true)}
+                className="px-4 py-2 text-sm border border-orange-300 text-orange-700 bg-orange-50 rounded-lg hover:bg-orange-100 transition-colors"
+              >
+                수정 요청
+              </button>
+            )}
+            {canLock && (
+              <button
+                onClick={() => handleAction("locked")}
+                disabled={actionLoading}
+                className="px-4 py-2 text-sm border border-gray-300 text-gray-700 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors disabled:opacity-50"
+              >
+                {actionLoading ? "처리 중..." : "잠금"}
+              </button>
+            )}
+            {canUnlock && (
+              <button
+                onClick={() => handleAction("submitted")}
+                disabled={actionLoading}
+                className="px-4 py-2 text-sm border border-blue-300 text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors disabled:opacity-50"
+              >
+                {actionLoading ? "처리 중..." : "잠금 해제"}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showRevisionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setShowRevisionModal(false)} />
+          <div className="relative bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4">
+            <h3 className="font-semibold text-gray-900 mb-3">수정 요청</h3>
+            <textarea
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              placeholder="수정 요청 사유를 입력해주세요 (선택)"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm h-24 resize-none focus:outline-none focus:ring-2 focus:ring-orange-500"
+            />
+            <div className="flex gap-2 justify-end mt-3">
+              <button
+                onClick={() => setShowRevisionModal(false)}
+                className="px-4 py-2 text-sm border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+              >
+                취소
+              </button>
+              <button
+                onClick={() => handleAction("revision_required", comment || undefined)}
+                disabled={actionLoading}
+                className="px-4 py-2 text-sm bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50"
+              >
+                {actionLoading ? "처리 중..." : "수정 요청"}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { getBranchesByIds } from "@/services/branches";
 import { getReport, upsertReport } from "@/services/reports";
@@ -66,9 +66,10 @@ export default function NewReportPage() {
   const [loading, setLoading] = useState(true);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const today = todayYMD();
-  const ymd = format(subDays(new Date(today), 1), "yyyy-MM-dd");
-  const reportId = selectedBranchId ? getReportId(selectedBranchId, today) : "";
+  const searchParams = useSearchParams();
+  const reportDate = searchParams?.get("date") ?? todayYMD();
+  const ymd = format(subDays(new Date(reportDate), 1), "yyyy-MM-dd");
+  const reportId = selectedBranchId ? getReportId(selectedBranchId, reportDate) : "";
 
   // Step 1 fields
   const [activeMembers, setActiveMembers] = useState<number | null>(null);
@@ -170,12 +171,12 @@ export default function NewReportPage() {
   useEffect(() => {
     if (!selectedBranchId) return;
     let cancelled = false;
-    const currentReportId = getReportId(selectedBranchId, today);
+    const currentReportId = getReportId(selectedBranchId, reportDate);
 
     async function loadReportContext() {
       try {
         const [ex, yd, cps] = await Promise.all([
-          getReport(selectedBranchId, today),
+          getReport(selectedBranchId, reportDate),
           getReport(selectedBranchId, ymd),
           getActiveCampaigns(selectedBranchId),
         ]);
@@ -207,7 +208,7 @@ export default function NewReportPage() {
 
     loadReportContext();
     return () => { cancelled = true; };
-  }, [selectedBranchId, today, ymd, applyIssues, applyReport, resetReportForm]);
+  }, [selectedBranchId, reportDate, ymd, applyIssues, applyReport, resetReportForm]);
 
   // Load campaign results
   useEffect(() => {
@@ -277,12 +278,12 @@ export default function NewReportPage() {
     setSaving(true);
     try {
       const nextStatus = existing?.status === "revision_required" ? "revision_required" : "draft";
-      await upsertReport(selectedBranchId, today, user.uid, collectData(), nextStatus);
+      await upsertReport(selectedBranchId, reportDate, user.uid, collectData(), nextStatus);
       setLastSaved(new Date());
     } finally {
       setSaving(false);
     }
-  }, [selectedBranchId, today, user, loading, existing, collectData, hasAnyReportInput]);
+  }, [selectedBranchId, reportDate, user, loading, existing, collectData, hasAnyReportInput]);
 
   const triggerDebounce = useCallback(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -300,7 +301,7 @@ export default function NewReportPage() {
     try {
       const editableStatus = existing?.status === "revision_required" ? "revision_required" : "draft";
       const reportData = collectData();
-      const rid = await upsertReport(selectedBranchId, today, user.uid, reportData, editableStatus);
+      const rid = await upsertReport(selectedBranchId, reportDate, user.uid, reportData, editableStatus);
       // Save issues
       const activeIssues = issues
         .filter((iss) => iss.hasIssue && iss.description)
@@ -312,15 +313,15 @@ export default function NewReportPage() {
           status: iss.status,
           memo: iss.memo || undefined,
         }));
-      await upsertIssues(rid, selectedBranchId, today, activeIssues);
+      await upsertIssues(rid, selectedBranchId, reportDate, activeIssues);
       // Save campaign results
       for (const c of campaigns) {
         const metrics = campaignResults[c.id] ?? {};
         if (Object.keys(metrics).length > 0) {
-          await upsertCampaignResult(c.id, rid, selectedBranchId, today, metrics);
+          await upsertCampaignResult(c.id, rid, selectedBranchId, reportDate, metrics);
         }
       }
-      await upsertReport(selectedBranchId, today, user.uid, reportData, "submitted");
+      await upsertReport(selectedBranchId, reportDate, user.uid, reportData, "submitted");
       router.push("/manager/reports");
     } finally {
       setSaving(false);
@@ -350,7 +351,7 @@ export default function NewReportPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-base font-bold text-gray-900">일일보고 작성</h1>
-          <p className="text-xs text-gray-400">{formatDate(today)}</p>
+          <p className="text-xs text-gray-400">{formatDate(reportDate)}</p>
         </div>
         <div className="flex items-center gap-2">
           {branches.length > 1 && (
