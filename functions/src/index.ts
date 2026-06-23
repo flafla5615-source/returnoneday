@@ -370,7 +370,7 @@ async function handleTm(branchId: string, branchName: string): Promise<string> {
 // ─── Handler: 캠페인 현황 ────────────────────────────────────────────────────
 async function handleCampaigns(branchId?: string, branchName?: string): Promise<string> {
   const baseQuery = db.collection("campaigns").where("status", "==", "active");
-  let snap = await baseQuery.get();
+  const snap = await baseQuery.get();
 
   // branchId 필드가 있는 경우 클라이언트 필터링
   let docs = snap.docs;

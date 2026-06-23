@@ -2,6 +2,7 @@ import {
   collection,
   doc,
   setDoc,
+  getDoc,
   getDocs,
   deleteDoc,
   updateDoc,
@@ -31,11 +32,10 @@ export async function upsertIssues(
     collection(db, "dailyReports", reportId, "issues")
   );
   await Promise.all(
-    existingSnap.docs.map((d) => {
-      // top-level issues에서도 삭제
-      deleteDoc(doc(db, "issues", d.id));
-      return deleteDoc(d.ref);
-    })
+    existingSnap.docs.flatMap((d) => [
+      deleteDoc(doc(db, "issues", d.id)),
+      deleteDoc(d.ref),
+    ])
   );
 
   // 새 이슈 저장
@@ -100,6 +100,13 @@ export async function updateIssueStatus(
   issueId: string,
   status: IssueStatus
 ): Promise<void> {
+  const issueRef = doc(db, "issues", issueId);
+  const issueSnap = await getDoc(issueRef);
+  if (!issueSnap.exists()) {
+    throw new Error("issue-not-found");
+  }
+
+  const issue = issueSnap.data() as Issue;
   const update: Record<string, unknown> = {
     status,
     updatedAt: serverTimestamp(),
@@ -108,5 +115,6 @@ export async function updateIssueStatus(
     update.resolvedAt = serverTimestamp();
   }
   // top-level issues 업데이트
-  await updateDoc(doc(db, "issues", issueId), update);
+  await updateDoc(issueRef, update);
+  await updateDoc(doc(db, "dailyReports", issue.reportId, "issues", issueId), update);
 }

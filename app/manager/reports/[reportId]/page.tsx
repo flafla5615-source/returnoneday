@@ -64,7 +64,7 @@ export default function ReportDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [reportId]);
+  }, [reportId, profile]);
 
   if (report === undefined) return <LoadingState />;
   if (!report) return <EmptyState title={loadError || "보고서를 찾을 수 없습니다"} />;
