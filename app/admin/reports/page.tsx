@@ -62,11 +62,15 @@ export default function AdminReportsPage() {
   }, []);
 
   useEffect(() => {
-    setLoading(true);
+    let cancelled = false;
     getAllReports(filterFrom, filterTo).then((rs) => {
+      if (cancelled) return;
       setReports(rs);
       setLoading(false);
     });
+    return () => {
+      cancelled = true;
+    };
   }, [filterFrom, filterTo]);
 
   const branchMap = useMemo(() => Object.fromEntries(branches.map((branch) => [branch.id, branch])), [branches]);
@@ -192,13 +196,19 @@ export default function AdminReportsPage() {
           <input
             type="date"
             value={filterFrom}
-            onChange={(event) => setFilterFrom(event.target.value)}
+            onChange={(event) => {
+              setLoading(true);
+              setFilterFrom(event.target.value);
+            }}
             className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
           />
           <input
             type="date"
             value={filterTo}
-            onChange={(event) => setFilterTo(event.target.value)}
+            onChange={(event) => {
+              setLoading(true);
+              setFilterTo(event.target.value);
+            }}
             className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
           />
           <select

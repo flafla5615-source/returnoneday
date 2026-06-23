@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { getBranchesByIds } from "@/services/branches";
@@ -41,12 +41,15 @@ export default function ManagerHomePage() {
     getBranchesByIds(profile.branchIds).then((bs) => {
       setBranches(bs);
       if (bs.length > 0) setSelectedBranchId(bs[0].id);
+      if (bs.length === 0) setLoading(false);
     });
   }, [profile]);
 
-  const loadData = useCallback(async () => {
+  useEffect(() => {
     if (!selectedBranchId) return;
-    setLoading(true);
+    let cancelled = false;
+
+    async function loadData() {
     try {
       const [tr, yr, rr, ac, iss] = await Promise.all([
         getReport(selectedBranchId, today),
@@ -55,17 +58,22 @@ export default function ManagerHomePage() {
         getActiveCampaigns(selectedBranchId),
         getAllIssues({ branchId: selectedBranchId, status: "open" }),
       ]);
+        if (cancelled) return;
       setTodayReport(tr);
       setYesterdayReport(yr);
       setRecentReports(rr);
       setCampaigns(ac);
       setIssues(iss);
     } finally {
-      setLoading(false);
+        if (!cancelled) setLoading(false);
     }
-  }, [selectedBranchId, today, yesterday]);
+    }
 
-  useEffect(() => { loadData(); }, [loadData]);
+    void loadData();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedBranchId, today, yesterday]);
 
   const selectedBranch = branches.find((b) => b.id === selectedBranchId);
 
@@ -98,7 +106,10 @@ export default function ManagerHomePage() {
         {branches.length > 1 && (
           <select
             value={selectedBranchId}
-            onChange={(e) => setSelectedBranchId(e.target.value)}
+            onChange={(e) => {
+              setLoading(true);
+              setSelectedBranchId(e.target.value);
+            }}
             className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
           >
             {branches.map((b) => (

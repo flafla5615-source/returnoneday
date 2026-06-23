@@ -27,16 +27,21 @@ export default function ReportsPage() {
     getBranchesByIds(profile.branchIds).then((bs) => {
       setBranches(bs);
       if (bs.length > 0) setSelectedBranchId(bs[0].id);
+      if (bs.length === 0) setLoading(false);
     });
   }, [profile]);
 
   useEffect(() => {
     if (!selectedBranchId) return;
-    setLoading(true);
+    let cancelled = false;
     getReportsByBranch(selectedBranchId, from, today).then((rs) => {
+      if (cancelled) return;
       setReports(rs);
       setLoading(false);
     });
+    return () => {
+      cancelled = true;
+    };
   }, [selectedBranchId, today, from]);
 
   return (
@@ -46,7 +51,10 @@ export default function ReportsPage() {
         {branches.length > 1 && (
           <select
             value={selectedBranchId}
-            onChange={(e) => setSelectedBranchId(e.target.value)}
+            onChange={(e) => {
+              setLoading(true);
+              setSelectedBranchId(e.target.value);
+            }}
             className="border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white"
           >
             {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}

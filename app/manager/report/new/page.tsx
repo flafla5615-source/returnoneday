@@ -163,15 +163,13 @@ export default function NewReportPage() {
     getBranchesByIds(profile.branchIds).then((bs) => {
       setBranches(bs);
       if (bs.length > 0) setSelectedBranchId(bs[0].id);
+      if (bs.length === 0) setLoading(false);
     });
   }, [profile]);
 
   useEffect(() => {
     if (!selectedBranchId) return;
     let cancelled = false;
-    setLoading(true);
-    setCampaignResults({});
-    setLastSaved(null);
     const currentReportId = getReportId(selectedBranchId, today);
 
     async function loadReportContext() {
@@ -192,6 +190,8 @@ export default function NewReportPage() {
         if (cancelled) return;
         setYesterday(yd);
         setCampaigns(cps);
+        if (cps.length === 0) setCampaignResults({});
+        setLastSaved(null);
         if (ex) {
           applyReport(ex);
           applyIssues(reportIssues);
@@ -212,17 +212,20 @@ export default function NewReportPage() {
   // Load campaign results
   useEffect(() => {
     if (!reportId) return;
-    if (campaigns.length === 0) {
-      setCampaignResults({});
-      return;
-    }
+    if (campaigns.length === 0) return;
+    let cancelled = false;
     const rMap: Record<string, Record<string, number | null>> = {};
     Promise.all(
       campaigns.map(async (c) => {
         const res = await getCampaignResultByReport(c.id, reportId);
         rMap[c.id] = res?.metrics ?? {};
       })
-    ).then(() => setCampaignResults(rMap));
+    ).then(() => {
+      if (!cancelled) setCampaignResults(rMap);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [reportId, campaigns]);
 
   const collectData = useCallback((): Partial<DailyReport> => ({
@@ -353,7 +356,10 @@ export default function NewReportPage() {
           {branches.length > 1 && (
             <select
               value={selectedBranchId}
-              onChange={(e) => setSelectedBranchId(e.target.value)}
+              onChange={(e) => {
+                setLoading(true);
+                setSelectedBranchId(e.target.value);
+              }}
               className="border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white"
             >
               {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}

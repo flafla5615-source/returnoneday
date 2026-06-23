@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getBranchesByIds } from "@/services/branches";
 import { getReportsByBranch } from "@/services/reports";
@@ -57,23 +57,31 @@ export default function ManagerDashboardPage() {
     getBranchesByIds(profile.branchIds).then((bs) => {
       setBranches(bs);
       if (bs.length > 0) setSelectedBranchId(bs[0].id);
+      if (bs.length === 0) setLoading(false);
     });
   }, [profile]);
 
-  const loadData = useCallback(async () => {
+  useEffect(() => {
     if (!selectedBranchId) return;
-    setLoading(true);
+    let cancelled = false;
+
+    async function loadData() {
     const { from, to } = getRange(filter);
     const [rs, iss] = await Promise.all([
       getReportsByBranch(selectedBranchId, from, to),
       getAllIssues({ branchId: selectedBranchId }),
     ]);
+      if (cancelled) return;
     setReports(rs);
     setIssues(iss);
     setLoading(false);
-  }, [selectedBranchId, filter]);
+    }
 
-  useEffect(() => { loadData(); }, [loadData]);
+    void loadData();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedBranchId, filter]);
 
   const submitted = reports.filter((r) => r.activeMembers !== null);
   const latestReport = submitted[0];
@@ -104,7 +112,14 @@ export default function ManagerDashboardPage() {
         <h1 className="text-base font-bold text-gray-900">지점 대시보드</h1>
         <div className="flex items-center gap-2">
           {branches.length > 1 && (
-            <select value={selectedBranchId} onChange={(e) => setSelectedBranchId(e.target.value)} className="border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white">
+            <select
+              value={selectedBranchId}
+              onChange={(e) => {
+                setLoading(true);
+                setSelectedBranchId(e.target.value);
+              }}
+              className="border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white"
+            >
               {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
           )}
@@ -112,7 +127,12 @@ export default function ManagerDashboardPage() {
             {FILTERS.map((f) => (
               <button
                 key={f.key}
-                onClick={() => setFilter(f.key)}
+                onClick={() => {
+                  if (f.key !== filter) {
+                    setLoading(true);
+                    setFilter(f.key);
+                  }
+                }}
                 className={`px-3 py-1.5 text-xs font-medium transition-colors ${filter === f.key ? "bg-[#1e3a5f] text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}
               >
                 {f.label}
