@@ -32,16 +32,23 @@ export default function ManagerHomePage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [issues, setIssues] = useState<Issue[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const today = todayYMD();
   const yesterday = format(subDays(new Date(today), 1), "yyyy-MM-dd");
 
   useEffect(() => {
     if (!profile) return;
+    console.log("manager home profile:", { uid: profile.uid, name: profile.name, branchIds: profile.branchIds });
     getBranchesByIds(profile.branchIds).then((bs) => {
+      console.log("branches:", bs.length, bs.map((b) => b.name));
       setBranches(bs);
       if (bs.length > 0) setSelectedBranchId(bs[0].id);
       if (bs.length === 0) setLoading(false);
+    }).catch((err) => {
+      console.error("admin dashboard load error:", err);
+      setLoadError("지점 정보를 불러오지 못했습니다. 관리자에게 지점 배정을 요청하세요.");
+      setLoading(false);
     });
   }, [profile]);
 
@@ -50,23 +57,28 @@ export default function ManagerHomePage() {
     let cancelled = false;
 
     async function loadData() {
-    try {
-      const [tr, yr, rr, ac, iss] = await Promise.all([
-        getReport(selectedBranchId, today),
-        getReport(selectedBranchId, yesterday),
-        getRecentReports(selectedBranchId, 7),
-        getActiveCampaigns(selectedBranchId),
-        getAllIssues({ branchId: selectedBranchId, status: "open" }),
-      ]);
+      try {
+        console.log("manager home loading:", { selectedBranchId, today });
+        const [tr, yr, rr, ac, iss] = await Promise.all([
+          getReport(selectedBranchId, today),
+          getReport(selectedBranchId, yesterday),
+          getRecentReports(selectedBranchId, 7),
+          getActiveCampaigns(selectedBranchId),
+          getAllIssues({ branchId: selectedBranchId, status: "open" }),
+        ]);
         if (cancelled) return;
-      setTodayReport(tr);
-      setYesterdayReport(yr);
-      setRecentReports(rr);
-      setCampaigns(ac);
-      setIssues(iss);
-    } finally {
+        console.log("loaded reports:", rr.length, "todayReport:", tr?.status ?? "없음");
+        setTodayReport(tr);
+        setYesterdayReport(yr);
+        setRecentReports(rr);
+        setCampaigns(ac);
+        setIssues(iss);
+      } catch (err) {
+        console.error("admin dashboard load error:", err);
+        if (!cancelled) setLoadError("데이터를 불러오지 못했습니다.");
+      } finally {
         if (!cancelled) setLoading(false);
-    }
+      }
     }
 
     void loadData();
@@ -91,6 +103,24 @@ export default function ManagerHomePage() {
 
   if (loading && todayReport === undefined) return <LoadingState />;
 
+  if (loadError) {
+    return (
+      <div className="rounded-xl border border-red-200 bg-red-50 p-6 space-y-1">
+        <p className="text-sm font-semibold text-red-700">데이터 로드 실패</p>
+        <p className="text-sm text-red-500">{loadError}</p>
+      </div>
+    );
+  }
+
+  if (!loading && branches.length === 0) {
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 space-y-1">
+        <p className="text-sm font-semibold text-amber-700">배정된 지점 없음</p>
+        <p className="text-sm text-amber-600">관리자에게 지점 배정을 요청하세요. 배정 후 다시 로그인해주세요.</p>
+      </div>
+    );
+  }
+
   const reportStatus = todayReport?.status ?? null;
 
   return (
@@ -99,7 +129,7 @@ export default function ManagerHomePage() {
       <div className="flex items-center justify-between">
         <div>
           <p className="text-lg font-bold text-gray-900">
-            {profile?.name}님, 오늘도 화이팅입니다! 🔥
+            {profile?.name ?? "사용자"}님, 오늘도 화이팅입니다!
           </p>
           <p className="text-xs text-gray-400">{formatDate(today)} 기준</p>
         </div>

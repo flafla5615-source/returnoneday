@@ -64,6 +64,7 @@ export default function NewReportPage() {
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [submitOpen, setSubmitOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [submitError, setSubmitError] = useState("");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const searchParams = useSearchParams();
@@ -294,15 +295,40 @@ export default function NewReportPage() {
   useEffect(() => { triggerDebounce(); }, [activeMembers, inquiries, ptConsultations, ptRegistrations, reRegistrations, comebackMembers, happyCalls, newHappyCalls, existingHappyCalls, expiringTmCount, expiringTmMethods, unregisteredTmCount, unregisteredTmMethods, offlinePromotionCount, offlinePromotionMethods, promotionMemo, triggerDebounce]);
 
   async function handleSubmit() {
-    if (!selectedBranchId || !user) return;
+    setSubmitError("");
+
+    // Pre-submit validation with console log
+    console.log("report submit attempt:", {
+      branchId: selectedBranchId,
+      reportDate,
+      writerUid: user?.uid,
+      status: "submitted",
+      reportData: collectData(),
+    });
+
+    if (!user) {
+      setSubmitError("로그인 상태를 확인해주세요.");
+      return;
+    }
+    if (!selectedBranchId) {
+      setSubmitError("지점이 선택되지 않았습니다. 관리자에게 지점 배정을 요청하세요.");
+      return;
+    }
+    if (!reportDate) {
+      setSubmitError("보고 날짜를 확인해주세요.");
+      return;
+    }
+
     const canEditReport = !existing || existing.status === "draft" || existing.status === "revision_required";
     if (!canEditReport) return;
+
     setSaving(true);
     try {
       const editableStatus = existing?.status === "revision_required" ? "revision_required" : "draft";
       const reportData = collectData();
       const rid = await upsertReport(selectedBranchId, reportDate, user.uid, reportData, editableStatus);
-      // Save issues
+
+      // Save issues (while report is still draft - security rule requirement)
       const activeIssues = issues
         .filter((iss) => iss.hasIssue && iss.description)
         .map((iss) => ({
@@ -314,6 +340,7 @@ export default function NewReportPage() {
           memo: iss.memo || undefined,
         }));
       await upsertIssues(rid, selectedBranchId, reportDate, activeIssues);
+
       // Save campaign results
       for (const c of campaigns) {
         const metrics = campaignResults[c.id] ?? {};
@@ -321,8 +348,22 @@ export default function NewReportPage() {
           await upsertCampaignResult(c.id, rid, selectedBranchId, reportDate, metrics);
         }
       }
+
+      // Final: set status to submitted
       await upsertReport(selectedBranchId, reportDate, user.uid, reportData, "submitted");
-      router.push("/manager/reports");
+
+      console.log("report submit success:", rid);
+      router.push("/manager");
+    } catch (err) {
+      console.error("report submit failed:", err);
+      const code = (err as { code?: string })?.code ?? "unknown";
+      const msg =
+        code === "permission-denied"
+          ? "저장 권한이 없습니다. 계정의 지점 배정 여부와 활성 상태를 확인하세요. (permission-denied)"
+          : code === "unauthenticated"
+            ? "로그인 세션이 만료되었습니다. 다시 로그인해주세요."
+            : `보고서 저장에 실패했습니다. (${code})`;
+      setSubmitError(msg);
     } finally {
       setSaving(false);
     }
@@ -740,12 +781,19 @@ export default function NewReportPage() {
         </div>
       </div>
 
+      {submitError && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+          <p className="text-sm font-semibold text-red-700">제출 실패</p>
+          <p className="text-sm text-red-500 mt-0.5">{submitError}</p>
+        </div>
+      )}
+
       <ConfirmDialog
         open={submitOpen}
         title="일일보고를 제출하시겠습니까?"
         description="제출 후 마감시간이 지나면 수정할 수 없습니다."
         confirmLabel="제출"
-        onConfirm={() => { setSubmitOpen(false); handleSubmit(); }}
+        onConfirm={() => { setSubmitOpen(false); void handleSubmit(); }}
         onCancel={() => setSubmitOpen(false)}
       />
     </div>
