@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { FirebaseError } from "firebase/app";
 import { useAuth } from "@/contexts/AuthContext";
 import { getBranchesByIds } from "@/services/branches";
 import { getReport, upsertReport } from "@/services/reports";
@@ -246,7 +247,7 @@ export default function NewReportPage() {
     unregisteredTmMethods,
     offlinePromotionCount,
     offlinePromotionMethods,
-    promotionMemo: promotionMemo || undefined,
+    ...(promotionMemo ? { promotionMemo } : {}),
   }), [activeMembers, inquiries, ptConsultations, ptRegistrations, reRegistrations, comebackMembers, happyCalls, newHappyCalls, existingHappyCalls, expiringTmCount, expiringTmMethods, unregisteredTmCount, unregisteredTmMethods, offlinePromotionCount, offlinePromotionMethods, promotionMemo]);
 
   const hasAnyReportInput = useCallback(() => {
@@ -337,7 +338,7 @@ export default function NewReportPage() {
           description: iss.description,
           severity: iss.severity,
           status: iss.status,
-          memo: iss.memo || undefined,
+          ...(iss.memo ? { memo: iss.memo } : {}),
         }));
       await upsertIssues(rid, selectedBranchId, reportDate, activeIssues);
 
@@ -356,13 +357,18 @@ export default function NewReportPage() {
       router.push("/manager");
     } catch (err) {
       console.error("report submit failed:", err);
-      const code = (err as { code?: string })?.code ?? "unknown";
+      if (err instanceof FirebaseError) {
+        console.error("firebase code:", err.code);
+        console.error("firebase message:", err.message);
+      }
+      const code = err instanceof FirebaseError ? err.code : (err as { code?: string })?.code ?? "unknown";
+      const detail = err instanceof FirebaseError ? ` — ${err.message}` : "";
       const msg =
         code === "permission-denied"
           ? "저장 권한이 없습니다. 계정의 지점 배정 여부와 활성 상태를 확인하세요. (permission-denied)"
           : code === "unauthenticated"
             ? "로그인 세션이 만료되었습니다. 다시 로그인해주세요."
-            : `보고서 저장에 실패했습니다. (${code})`;
+            : `보고서 저장에 실패했습니다. (${code})${detail}`;
       setSubmitError(msg);
     } finally {
       setSaving(false);

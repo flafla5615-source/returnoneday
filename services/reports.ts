@@ -14,7 +14,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { DailyReport, ReportStatus, ReportComment } from "@/types";
-import { getReportId } from "@/lib/utils";
+import { getReportId, removeUndefinedDeep } from "@/lib/utils";
 
 export async function getReport(
   branchId: string,
@@ -46,9 +46,19 @@ export async function upsertReport(
   data: Partial<DailyReport>,
   status: ReportStatus = "draft"
 ): Promise<string> {
+  if (!branchId) throw new Error("branchId is missing");
+  if (!writerUid) throw new Error("writerUid is missing");
+  if (!date) throw new Error("reportDate is missing");
+
   const id = getReportId(branchId, date);
   const ref = doc(db, "dailyReports", id);
   const existing = await getDoc(ref);
+
+  const cleanData = removeUndefinedDeep(data);
+
+  console.log("report document id:", id);
+  console.log("report payload raw:", cleanData);
+  console.log("report payload json:", JSON.stringify(cleanData, null, 2));
 
   if (existing.exists()) {
     const currentStatus = existing.data().status as ReportStatus;
@@ -57,10 +67,9 @@ export async function upsertReport(
     }
 
     await updateDoc(ref, {
-      ...data,
+      ...cleanData,
       status,
       updatedAt: serverTimestamp(),
-      // submittedAt은 최초 제출 시에만 기록
       ...(status === "submitted" && !existing.data().submittedAt
         ? { submittedAt: serverTimestamp() }
         : {}),
@@ -72,7 +81,6 @@ export async function upsertReport(
       reportDate: date,
       writerUid,
       status,
-      // 모든 수치 필드의 기본값은 null (미입력)
       activeMembers: null,
       inquiries: null,
       ptConsultations: null,
@@ -88,12 +96,19 @@ export async function upsertReport(
       unregisteredTmMethods: [],
       offlinePromotionCount: null,
       offlinePromotionMethods: [],
-      ...data,
+      ...cleanData,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
       ...(status === "submitted" ? { submittedAt: serverTimestamp() } : {}),
     });
   }
+
+  const savedSnap = await getDoc(ref);
+  if (!savedSnap.exists()) {
+    throw new Error("저장 후 문서를 확인할 수 없습니다.");
+  }
+  console.log("saved report:", savedSnap.data());
+
   return id;
 }
 

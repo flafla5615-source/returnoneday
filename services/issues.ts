@@ -13,6 +13,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { Issue, IssueStatus } from "@/types";
+import { removeUndefinedDeep } from "@/lib/utils";
 
 /**
  * 보고서의 이슈를 전체 교체 저장.
@@ -40,10 +41,7 @@ export async function upsertIssues(
   // 새 이슈 저장
   for (const issue of issues) {
     const ref = doc(collection(db, "dailyReports", reportId, "issues"));
-    const issueDoc: Omit<Issue, "createdAt" | "updatedAt"> & {
-      createdAt: ReturnType<typeof serverTimestamp>;
-      updatedAt: ReturnType<typeof serverTimestamp>;
-    } = {
+    const issueDoc = removeUndefinedDeep({
       id: ref.id,
       reportId,
       branchId,
@@ -51,7 +49,7 @@ export async function upsertIssues(
       ...issue,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
-    };
+    });
     await setDoc(ref, issueDoc);
     // top-level issues 컬렉션에도 동일 ID로 저장
     await setDoc(doc(db, "issues", ref.id), issueDoc);
