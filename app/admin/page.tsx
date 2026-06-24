@@ -18,25 +18,54 @@ export default function AdminDashboardPage() {
   const [issues, setIssues] = useState<Issue[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const today = todayYMD();
 
   useEffect(() => {
+    console.log("admin today:", today);
+    setLoading(true);
+    setError(null);
+
     Promise.all([
       getAllBranches(),
       getTodayAllReports(today),
       getAllIssues(),
       getAllCampaigns(),
-    ]).then(([bs, rs, iss, cps]) => {
-      setBranches(bs);
-      setReports(rs);
-      setIssues(iss);
-      setCampaigns(cps.filter((c) => c.status === "active"));
-      setLoading(false);
-    });
+    ])
+      .then(([bs, rs, iss, cps]) => {
+        console.log("branches:", bs.length, bs.map((b) => b.name));
+        console.log("loaded reports:", rs.length, rs.map((r) => r.id));
+        const submitted = rs.filter((r) => r.status === "submitted" || r.status === "locked");
+        console.log("submitted reports:", submitted.length, submitted.map((r) => r.id));
+        setBranches(bs);
+        setReports(rs);
+        setIssues(iss);
+        setCampaigns(cps.filter((c) => c.status === "active"));
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error("admin dashboard load error:", err);
+        const code: string = (err as { code?: string })?.code ?? "unknown";
+        setError(
+          code === "permission-denied"
+            ? "데이터 접근 권한이 없습니다. Firestore 관리자 문서의 role/status를 확인하세요. (permission-denied)"
+            : `데이터 로드 오류: ${code}`
+        );
+        setLoading(false);
+      });
   }, [today]);
 
   if (loading) return <LoadingState />;
+
+  if (error) {
+    return (
+      <div className="rounded-xl border border-red-200 bg-red-50 p-6 space-y-1">
+        <p className="text-sm font-semibold text-red-700">데이터 로드 실패</p>
+        <p className="text-sm text-red-500">{error}</p>
+      </div>
+    );
+  }
 
   const submitted = reports.filter((r) => r.status === "submitted" || r.status === "locked");
   const revisionNeeded = reports.filter((r) => r.status === "revision_required");

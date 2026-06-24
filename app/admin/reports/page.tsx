@@ -40,6 +40,7 @@ export default function AdminReportsPage() {
   const [reports, setReports] = useState<DailyReport[]>([]);
   const [issues, setIssues] = useState<Issue[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const [filterBrand, setFilterBrand] = useState("");
   const [filterRegion, setFilterRegion] = useState("");
@@ -54,20 +55,42 @@ export default function AdminReportsPage() {
   const [actionSaving, setActionSaving] = useState(false);
 
   useEffect(() => {
-    Promise.all([getAllBranches(), getAllUsers(), getAllIssues()]).then(([bs, us, iss]) => {
-      setBranches(bs);
-      setUsers(us);
-      setIssues(iss);
-    });
+    Promise.all([getAllBranches(), getAllUsers(), getAllIssues()])
+      .then(([bs, us, iss]) => {
+        console.log("branches:", bs.length, bs.map((b) => b.name));
+        setBranches(bs);
+        setUsers(us);
+        setIssues(iss);
+      })
+      .catch((err) => {
+        console.error("admin dashboard load error:", err);
+      });
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-    getAllReports(filterFrom, filterTo).then((rs) => {
-      if (cancelled) return;
-      setReports(rs);
-      setLoading(false);
-    });
+    setLoading(true);
+    setError(null);
+    getAllReports(filterFrom, filterTo)
+      .then((rs) => {
+        if (cancelled) return;
+        console.log("loaded reports:", rs.length, rs.map((r) => r.id));
+        const submitted = rs.filter((r) => r.status === "submitted" || r.status === "locked");
+        console.log("submitted reports:", submitted.length);
+        setReports(rs);
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error("admin dashboard load error:", err);
+        const code: string = (err as { code?: string })?.code ?? "unknown";
+        setError(
+          code === "permission-denied"
+            ? "데이터 접근 권한이 없습니다. Firestore 관리자 문서의 role/status를 확인하세요. (permission-denied)"
+            : `데이터 로드 오류: ${code}`
+        );
+        setLoading(false);
+      });
     return () => {
       cancelled = true;
     };
@@ -281,7 +304,12 @@ export default function AdminReportsPage() {
         </div>
       </div>
 
-      {loading ? (
+      {error ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-6 space-y-1">
+          <p className="text-sm font-semibold text-red-700">데이터 로드 실패</p>
+          <p className="text-sm text-red-500">{error}</p>
+        </div>
+      ) : loading ? (
         <LoadingState />
       ) : filtered.length === 0 ? (
         <EmptyState title="조건에 맞는 보고 데이터가 없습니다" />
