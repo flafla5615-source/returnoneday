@@ -4,27 +4,16 @@ import * as admin from "firebase-admin";
 admin.initializeApp();
 const db = admin.firestore();
 
-// ─── KakaoTalk i-builder v2 types ─────────────────────────────────────────
-
+// ─── KakaoTalk i-builder v2 types ─────────────────────────────────────────────
 interface KakaoRequestBody {
-  userRequest?: {
-    utterance?: string;
-    user?: { id?: string };
-  };
+  userRequest?: { utterance?: string };
 }
-
 interface KakaoResponse {
   version: "2.0";
-  template: {
-    outputs: Array<
-      | { simpleText: { text: string } }
-      | { basicCard: { title: string; description: string } }
-    >;
-  };
+  template: { outputs: Array<{ simpleText: { text: string } }> };
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────
-
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 function simpleText(text: string): KakaoResponse {
   return { version: "2.0", template: { outputs: [{ simpleText: { text } }] } };
 }
@@ -37,34 +26,69 @@ function todayKST(): string {
   return nowKST().toISOString().slice(0, 10);
 }
 
+function yesterdayKST(): string {
+  const d = nowKST();
+  d.setDate(d.getDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
 function fmt(v: number | null | undefined, unit: string): string {
   return v !== null && v !== undefined ? `${v}${unit}` : "-";
 }
 
-function ptRate(consult: number | null | undefined, reg: number | null | undefined): string {
-  if (!consult || !reg) return "-";
-  return `${Math.round((reg / consult) * 100)}%`;
+function ptRate(c: number | null | undefined, r: number | null | undefined): string {
+  if (!c || !r) return "-";
+  return `${Math.round((r / c) * 100)}%`;
 }
 
 const STATUS_LABEL: Record<string, string> = {
   draft: "작성 중",
-  submitted: "제출 완료",
-  revision_required: "수정 요청",
-  locked: "잠금",
+  submitted: "제출 완료 ✅",
+  revision_required: "수정 요청 ⚠️",
+  locked: "잠금 🔒",
 };
 
-// ─── Branch name matching ─────────────────────────────────────────────────
-// 유사 매칭: 사용자 입력이 지점명에 포함되거나, 지점명이 사용자 입력에 포함
+const SEVERITY_LABEL: Record<string, string> = {
+  low: "낮음", medium: "중간", high: "높음", critical: "긴급 🚨",
+};
 
-function matchBranch(
-  docs: admin.firestore.QueryDocumentSnapshot[],
-  query: string
-): admin.firestore.QueryDocumentSnapshot | null {
+const ISSUE_TYPE_LABEL: Record<string, string> = {
+  claim: "클레임", staff: "인력", facility: "시설",
+};
+
+// ─── Intent detection ─────────────────────────────────────────────────────────
+type Intent =
+  | "help"
+  | "allSummary"
+  | "reportStatus"
+  | "campaigns"
+  | "trend"
+  | "issues"
+  | "tm"
+  | "yesterday"
+  | "today";
+
+function detectIntent(u: string): Intent {
+  const s = u.toLowerCase().replace(/\s/g, "");
+  if (/(도움말|사용법|명령어|help)/.test(s)) return "help";
+  if (/(전체현황|전체요약|전지점요약|모든지점|전지점)/.test(s)) return "allSummary";
+  if (/(보고현황|제출현황|오늘보고현황|보고상태)/.test(s)) return "reportStatus";
+  if (/(추이|트렌드|7일|주간)/.test(s)) return "trend";
+  if (/(이슈|클레임)/.test(s)) return "issues";
+  if (/(tm|티엠)/.test(s)) return "tm";
+  if (/캠페인/.test(s)) return "campaigns";
+  if (/어제/.test(s)) return "yesterday";
+  return "today";
+}
+
+// ─── Branch matching ──────────────────────────────────────────────────────────
+type BranchDoc = admin.firestore.QueryDocumentSnapshot;
+
+function matchBranch(docs: BranchDoc[], query: string): BranchDoc | null {
   const q = query.trim();
-  // 1) 완전 일치
+  if (!q) return null;
   const exact = docs.find((d) => (d.data().name as string) === q);
   if (exact) return exact;
-  // 2) 포함 검색 (긴 쪽 → 짧은 쪽 우선)
   const partial = docs
     .filter((d) => {
       const name = d.data().name as string;
@@ -74,17 +98,20 @@ function matchBranch(
   return partial[0] ?? null;
 }
 
-// ─── Keyword extraction ───────────────────────────────────────────────────
-// "어반요가 대시보드", "어반요가 현황", "어반요가" 모두 → "어반요가"
-
 function extractBranchQuery(utterance: string): string {
   return utterance
-    .replace(/대시보드|현황|보고서|오늘|어제|실적|조회|알려줘|보여줘/g, "")
+    .replace(/(대시보드|현황|보고서|오늘|어제|실적|조회|알려줘|보여줘|추이|트렌드|7일|주간|이슈|클레임|TM|tm|티엠|캠페인)/gi, "")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-// ─── Report formatter ─────────────────────────────────────────────────────
+// ─── Firestore data types ─────────────────────────────────────────────────────
+interface TmBreakdown {
+  phone: number;
+  sms: number;
+  kakao: number;
+  other: number;
+}
 
 interface ReportData {
   branchId: string;
@@ -97,22 +124,24 @@ interface ReportData {
   reRegistrations: number | null;
   comebackMembers: number | null;
   happyCalls: number | null;
+  expiringTm?: TmBreakdown;
   expiringTmTotal?: number;
+  unregisteredTm?: TmBreakdown;
   unregisteredTmTotal?: number;
   offlinePromotionTotal?: number;
 }
 
-function formatReport(branchName: string, report: ReportData): string {
+// ─── Shared dashboard formatter ───────────────────────────────────────────────
+function formatDashboard(branchName: string, report: ReportData, dayLabel?: string): string {
   const today = todayKST();
-  const dateLabel = report.reportDate === today ? "오늘" : report.reportDate;
+  const dateLabel = dayLabel ?? (report.reportDate === today ? "오늘" : report.reportDate);
   const status = STATUS_LABEL[report.status] ?? report.status;
-
   const tmTotal = (report.expiringTmTotal ?? 0) + (report.unregisteredTmTotal ?? 0);
   const promoTotal = report.offlinePromotionTotal ?? 0;
 
-  const lines: string[] = [
-    `📊 ${branchName} 대시보드`,
-    `📅 ${dateLabel} 기준 · ${status}`,
+  const lines = [
+    `📊 ${branchName} ${dateLabel} 실적`,
+    `📅 ${report.reportDate} · ${status}`,
     ``,
     `👥 유효회원  ${fmt(report.activeMembers, "명")}`,
     `📋 문의      ${fmt(report.inquiries, "건")}`,
@@ -123,27 +152,255 @@ function formatReport(branchName: string, report: ReportData): string {
     `🏃 컴백      ${fmt(report.comebackMembers, "명")}`,
     `📞 해피콜    ${fmt(report.happyCalls, "건")}`,
   ];
+  if (tmTotal > 0) lines.push(``, `📱 TM 총합   ${tmTotal}건`);
+  if (promoTotal > 0) lines.push(`📣 홍보 총합 ${promoTotal}개`);
+  return lines.join("\n");
+}
 
-  if (tmTotal > 0) {
-    lines.push(``, `📱 TM 총합   ${tmTotal}건`);
-  }
-  if (promoTotal > 0) {
-    lines.push(`📣 홍보 총합 ${promoTotal}개`);
-  }
+// ─── Handler: 도움말 ─────────────────────────────────────────────────────────
+function handleHelp(): string {
+  return [
+    `📱 리턴라이프 챗봇 사용법`,
+    ``,
+    `🔹 오늘 대시보드`,
+    `   {지점명} 대시보드`,
+    `   예) 어반요가 대시보드`,
+    ``,
+    `🔹 어제 실적`,
+    `   {지점명} 어제`,
+    `   예) 어반요가 어제`,
+    ``,
+    `🔹 7일 추이`,
+    `   {지점명} 추이`,
+    `   예) 어반요가 추이`,
+    ``,
+    `🔹 TM 상세 현황`,
+    `   {지점명} TM`,
+    `   예) 어반요가 TM`,
+    ``,
+    `🔹 운영 이슈 조회`,
+    `   {지점명} 이슈`,
+    `   예) 어반요가 이슈`,
+    ``,
+    `🔹 전 지점 오늘 요약`,
+    `   전체 현황`,
+    ``,
+    `🔹 보고 제출 현황`,
+    `   보고 현황`,
+    ``,
+    `🔹 캠페인 현황`,
+    `   캠페인 현황`,
+    `   {지점명} 캠페인`,
+    ``,
+    `🔹 이 도움말`,
+    `   도움말`,
+  ].join("\n");
+}
+
+// ─── Handler: 전 지점 보고 현황 ──────────────────────────────────────────────
+async function handleReportStatus(): Promise<string> {
+  const today = todayKST();
+  const branchesSnap = await db.collection("branches").where("active", "==", true).get();
+  if (branchesSnap.empty) return "등록된 활성 지점이 없습니다.";
+
+  const branches = branchesSnap.docs;
+  const refs = branches.map((b) => db.doc(`dailyReports/${b.id}_${today}`));
+  const reportDocs = await db.getAll(...refs);
+
+  const done: string[] = [];
+  const inProgress: string[] = [];
+  const none: string[] = [];
+
+  branches.forEach((b, i) => {
+    const name = b.data().name as string;
+    const rd = reportDocs[i];
+    const st = rd.exists ? (rd.data()?.status as string) : null;
+    if (st === "submitted" || st === "locked") {
+      done.push(`✅ ${name}`);
+    } else if (st === "draft" || st === "revision_required") {
+      inProgress.push(`🔄 ${name} (${STATUS_LABEL[st] ?? st})`);
+    } else {
+      none.push(`❌ ${name}`);
+    }
+  });
+
+  const lines = [
+    `📋 ${today} 보고 제출 현황`,
+    ``,
+    ...done,
+    ...inProgress,
+    ...none,
+    ``,
+    `제출 완료 ${done.length}  /  전체 ${branches.length}개 지점`,
+  ];
+  return lines.join("\n");
+}
+
+// ─── Handler: 전 지점 오늘 요약 ──────────────────────────────────────────────
+async function handleAllSummary(): Promise<string> {
+  const today = todayKST();
+  const branchesSnap = await db.collection("branches").where("active", "==", true).get();
+  if (branchesSnap.empty) return "등록된 활성 지점이 없습니다.";
+
+  const branches = branchesSnap.docs;
+  const refs = branches.map((b) => db.doc(`dailyReports/${b.id}_${today}`));
+  const reportDocs = await db.getAll(...refs);
+
+  const lines = [`🏢 전 지점 오늘 요약`, `📅 ${today} 기준`, ``];
+
+  branches.forEach((b, i) => {
+    const name = b.data().name as string;
+    const rd = reportDocs[i];
+    if (rd.exists) {
+      const r = rd.data() as ReportData;
+      const icon = r.status === "submitted" ? "✅" : r.status === "draft" ? "🔄" : "⚠️";
+      const members = r.activeMembers !== null ? `${r.activeMembers}명` : "-";
+      const conv = ptRate(r.ptConsultations, r.ptRegistrations);
+      lines.push(`${icon} ${name}`);
+      lines.push(`   유효 ${members} · 전환율 ${conv}`);
+    } else {
+      lines.push(`❌ ${name}`);
+      lines.push(`   미제출`);
+    }
+  });
 
   return lines.join("\n");
 }
 
-// ─── Main function ────────────────────────────────────────────────────────
+// ─── Handler: 7일 추이 ───────────────────────────────────────────────────────
+async function handleTrend(branchId: string, branchName: string): Promise<string> {
+  const snap = await db.collection("dailyReports")
+    .where("branchId", "==", branchId)
+    .orderBy("reportDate", "desc")
+    .limit(7)
+    .get();
 
+  if (snap.empty) return `${branchName}\n\n최근 7일 보고 데이터가 없습니다.`;
+
+  const lines = [`📈 ${branchName} 7일 추이`, ``];
+
+  snap.docs
+    .slice()
+    .reverse()
+    .forEach((d) => {
+      const r = d.data() as ReportData;
+      const date = r.reportDate.slice(5);
+      const members = r.activeMembers !== null ? `${r.activeMembers}명` : " -  ";
+      const conv = ptRate(r.ptConsultations, r.ptRegistrations);
+      const icon = r.status === "submitted" ? "✅" : r.status === "draft" ? "🔄" : "❌";
+      lines.push(`${icon} ${date}  유효 ${members} · 전환율 ${conv}`);
+    });
+
+  return lines.join("\n");
+}
+
+// ─── Handler: 운영 이슈 조회 ─────────────────────────────────────────────────
+async function handleIssues(branchId: string, branchName: string): Promise<string> {
+  const snap = await db.collection("issues").where("branchId", "==", branchId).get();
+  const open = snap.docs.filter((d) =>
+    ["open", "in_progress"].includes(d.data().status as string)
+  );
+
+  const lines = [`⚠️ ${branchName} 운영 이슈`, ``];
+
+  if (open.length === 0) {
+    lines.push("현재 미해결 이슈가 없습니다 👍");
+    return lines.join("\n");
+  }
+
+  open.forEach((d) => {
+    const iss = d.data();
+    const type = ISSUE_TYPE_LABEL[iss.type as string] ?? (iss.type as string);
+    const sev = SEVERITY_LABEL[iss.severity as string] ?? (iss.severity as string);
+    const st = iss.status === "in_progress" ? "처리 중" : "미해결";
+    lines.push(`[${type} · ${sev} · ${st}]`);
+    lines.push(`${iss.description as string}`);
+    if (iss.category) lines.push(`카테고리: ${iss.category as string}`);
+    lines.push(``);
+  });
+
+  return lines.join("\n").trimEnd();
+}
+
+// ─── Handler: TM 상세 현황 ───────────────────────────────────────────────────
+async function handleTm(branchId: string, branchName: string): Promise<string> {
+  const today = todayKST();
+  const doc = await db.doc(`dailyReports/${branchId}_${today}`).get();
+
+  if (!doc.exists) return `${branchName}\n\n오늘 보고서가 없습니다.`;
+
+  const r = doc.data() as ReportData;
+  const et = r.expiringTm;
+  const ut = r.unregisteredTm;
+
+  const lines = [`📱 ${branchName} TM 현황`, `📅 ${today} 기준`, ``];
+
+  if (et) {
+    const sub = et.phone + et.sms + et.kakao + et.other;
+    lines.push(`─ 만료·홀드 TM ─`);
+    lines.push(`  전화   ${et.phone}건`);
+    lines.push(`  문자   ${et.sms}건`);
+    lines.push(`  카카오 ${et.kakao}건`);
+    lines.push(`  기타   ${et.other}건`);
+    lines.push(`  소계   ${sub}건`);
+    lines.push(``);
+  }
+
+  if (ut) {
+    const sub = ut.phone + ut.sms + ut.kakao + ut.other;
+    lines.push(`─ 미등록 TM ─`);
+    lines.push(`  전화   ${ut.phone}건`);
+    lines.push(`  문자   ${ut.sms}건`);
+    lines.push(`  카카오 ${ut.kakao}건`);
+    lines.push(`  기타   ${ut.other}건`);
+    lines.push(`  소계   ${sub}건`);
+    lines.push(``);
+  }
+
+  if (!et && !ut) {
+    lines.push("오늘 TM 데이터가 없습니다.");
+    return lines.join("\n");
+  }
+
+  const total = (r.expiringTmTotal ?? 0) + (r.unregisteredTmTotal ?? 0);
+  lines.push(`전체 TM 합계: ${total}건`);
+  return lines.join("\n");
+}
+
+// ─── Handler: 캠페인 현황 ────────────────────────────────────────────────────
+async function handleCampaigns(branchId?: string, branchName?: string): Promise<string> {
+  const baseQuery = db.collection("campaigns").where("status", "==", "active");
+  let snap = await baseQuery.get();
+
+  // branchId 필드가 있는 경우 클라이언트 필터링
+  let docs = snap.docs;
+  if (branchId) {
+    const filtered = docs.filter((d) => (d.data().branchId as string | undefined) === branchId);
+    if (filtered.length > 0) docs = filtered;
+  }
+
+  const prefix = branchName ? `${branchName} ` : "";
+  const lines = [`📣 ${prefix}캠페인 현황`, ``];
+
+  if (docs.length === 0) {
+    lines.push("현재 진행 중인 캠페인이 없습니다.");
+    return lines.join("\n");
+  }
+
+  docs.forEach((d) => {
+    const c = d.data();
+    lines.push(`▶ ${c.name as string}`);
+    lines.push(`  기간: ${c.startDate as string} ~ ${c.endDate as string}`);
+    lines.push(``);
+  });
+
+  return lines.join("\n").trimEnd();
+}
+
+// ─── Main Cloud Function ──────────────────────────────────────────────────────
 export const kakaoDashboard = onRequest(
-  {
-    region: "asia-northeast3", // 서울 리전
-    timeoutSeconds: 10,
-    memory: "256MiB",
-  },
+  { region: "asia-northeast3", timeoutSeconds: 15, memory: "256MiB" },
   async (req, res) => {
-    // 카카오 오픈빌더는 POST로만 호출
     if (req.method !== "POST") {
       res.status(405).json(simpleText("지원하지 않는 요청 방식입니다."));
       return;
@@ -151,57 +408,105 @@ export const kakaoDashboard = onRequest(
 
     const body = req.body as KakaoRequestBody;
     const utterance = (body?.userRequest?.utterance ?? "").trim();
+    const intent = detectIntent(utterance);
 
-    const branchQuery = extractBranchQuery(utterance);
-
-    if (!branchQuery) {
-      res.json(
-        simpleText(
-          "조회할 지점명을 입력해주세요.\n\n예) 어반요가 대시보드\n예) 우아필라테스 현황"
-        )
-      );
+    // ── Global intents (지점명 불필요) ────────────────────────────────────────
+    if (intent === "help") {
+      res.json(simpleText(handleHelp()));
+      return;
+    }
+    if (intent === "reportStatus") {
+      res.json(simpleText(await handleReportStatus()));
+      return;
+    }
+    if (intent === "allSummary") {
+      res.json(simpleText(await handleAllSummary()));
       return;
     }
 
-    // 활성 지점 목록 조회
-    const branchesSnap = await db
-      .collection("branches")
-      .where("active", "==", true)
-      .get();
+    // ── Campaigns: 지점명 있으면 필터, 없으면 전체 ───────────────────────────
+    if (intent === "campaigns") {
+      const q = extractBranchQuery(utterance);
+      if (q) {
+        const bSnap = await db.collection("branches").where("active", "==", true).get();
+        const m = matchBranch(bSnap.docs, q);
+        res.json(simpleText(await handleCampaigns(m?.id, m?.data().name as string | undefined)));
+      } else {
+        res.json(simpleText(await handleCampaigns()));
+      }
+      return;
+    }
 
+    // ── Branch-specific intents ───────────────────────────────────────────────
+    const branchQuery = extractBranchQuery(utterance);
+
+    const intentHint: Record<string, string> = {
+      yesterday: "어제", trend: "추이", issues: "이슈", tm: "TM",
+    };
+
+    if (!branchQuery) {
+      const example = intentHint[intent] ?? "대시보드";
+      res.json(simpleText(
+        `지점명을 함께 입력해주세요.\n예) 어반요가 ${example}\n\n"도움말" 을 입력하면 전체 명령어를 볼 수 있습니다.`
+      ));
+      return;
+    }
+
+    const branchesSnap = await db.collection("branches").where("active", "==", true).get();
     const matched = matchBranch(branchesSnap.docs, branchQuery);
 
     if (!matched) {
-      res.json(
-        simpleText(
-          `'${branchQuery}' 지점을 찾을 수 없습니다.\n정확한 지점명을 입력해주세요.`
-        )
-      );
+      res.json(simpleText(
+        `'${branchQuery}' 지점을 찾을 수 없습니다.\n정확한 지점명을 입력해주세요.\n\n"도움말" 을 입력하면 사용법을 볼 수 있습니다.`
+      ));
       return;
     }
 
     const branchId = matched.id;
     const branchName = matched.data().name as string;
 
-    // 가장 최근 보고서 조회 (제출 완료 우선, 없으면 draft)
-    const reportsSnap = await db
-      .collection("dailyReports")
-      .where("branchId", "==", branchId)
-      .orderBy("reportDate", "desc")
-      .limit(3)
-      .get();
+    switch (intent) {
+      case "yesterday": {
+        const ydate = yesterdayKST();
+        const doc = await db.doc(`dailyReports/${branchId}_${ydate}`).get();
+        if (!doc.exists) {
+          res.json(simpleText(`${branchName}\n\n어제(${ydate}) 보고서가 없습니다.`));
+          return;
+        }
+        res.json(simpleText(formatDashboard(branchName, doc.data() as ReportData, "어제")));
+        return;
+      }
 
-    if (reportsSnap.empty) {
-      res.json(simpleText(`${branchName}\n\n아직 제출된 보고서가 없습니다.`));
-      return;
+      case "trend":
+        res.json(simpleText(await handleTrend(branchId, branchName)));
+        return;
+
+      case "issues":
+        res.json(simpleText(await handleIssues(branchId, branchName)));
+        return;
+
+      case "tm":
+        res.json(simpleText(await handleTm(branchId, branchName)));
+        return;
+
+      default: {
+        // "today" — 오늘 대시보드 (기존)
+        const snap = await db.collection("dailyReports")
+          .where("branchId", "==", branchId)
+          .orderBy("reportDate", "desc")
+          .limit(3)
+          .get();
+
+        if (snap.empty) {
+          res.json(simpleText(`${branchName}\n\n아직 제출된 보고서가 없습니다.`));
+          return;
+        }
+
+        const best =
+          snap.docs.find((d) => d.data().status === "submitted") ?? snap.docs[0];
+        res.json(simpleText(formatDashboard(branchName, best.data() as ReportData)));
+        return;
+      }
     }
-
-    // submitted 우선 선택, 없으면 첫 번째
-    const best =
-      reportsSnap.docs.find((d) => d.data().status === "submitted") ??
-      reportsSnap.docs[0];
-
-    const report = best.data() as ReportData;
-    res.json(simpleText(formatReport(branchName, report)));
   }
 );
