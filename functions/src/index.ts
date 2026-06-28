@@ -1,5 +1,7 @@
 import { onRequest } from "firebase-functions/v2/https";
+import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as admin from "firebase-admin";
+import * as nodemailer from "nodemailer";
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -396,6 +398,58 @@ async function handleCampaigns(branchId?: string, branchName?: string): Promise<
 
   return lines.join("\n").trimEnd();
 }
+
+// ─── Scheduled: 미제출 지점 이메일 알림 (매일 21:00 KST = 12:00 UTC) ────────
+export const dailyMissingReportAlert = onSchedule(
+  { schedule: "0 12 * * *", timeZone: "Asia/Seoul", region: "asia-northeast3", timeoutSeconds: 30, memory: "256MiB" },
+  async () => {
+    const today = todayKST();
+    const branchesSnap = await db.collection("branches").where("active", "==", true).get();
+    if (branchesSnap.empty) return;
+
+    const branches = branchesSnap.docs;
+    const refs = branches.map((b) => db.doc(`dailyReports/${b.id}_${today}`));
+    const reportDocs = await db.getAll(...refs);
+
+    const missing: string[] = [];
+    branches.forEach((b, i) => {
+      const rd = reportDocs[i];
+      const status = rd.exists ? (rd.data()?.status as string) : null;
+      if (!status || status === "draft" || status === "revision_required") {
+        const label = !status ? "미제출" : status === "draft" ? "작성 중" : "수정 요청";
+        missing.push(`• ${b.data().name as string} (${label})`);
+      }
+    });
+
+    if (missing.length === 0) return;
+
+    const adminEmail = process.env.ADMIN_EMAIL;
+    const gmailUser = process.env.GMAIL_USER;
+    const gmailPass = process.env.GMAIL_PASS;
+
+    if (!adminEmail || !gmailUser || !gmailPass) {
+      console.warn("이메일 환경변수 미설정 — ADMIN_EMAIL, GMAIL_USER, GMAIL_PASS 확인");
+      return;
+    }
+
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: { user: gmailUser, pass: gmailPass },
+    });
+
+    const subject = `[RETURN LIFE] ${today} 보고 미제출 알림 — ${missing.length}개 지점`;
+    const text = [
+      `오늘(${today}) 오후 9시 기준 미제출 또는 미완료 지점입니다.`,
+      ``,
+      ...missing,
+      ``,
+      `관리자 대시보드: https://returnlife-five.vercel.app/admin`,
+    ].join("\n");
+
+    await transporter.sendMail({ from: gmailUser, to: adminEmail, subject, text });
+    console.log(`알림 이메일 발송 완료 → ${adminEmail} (${missing.length}개 지점)`);
+  }
+);
 
 // ─── Main Cloud Function ──────────────────────────────────────────────────────
 export const kakaoDashboard = onRequest(
