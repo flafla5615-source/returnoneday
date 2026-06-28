@@ -72,14 +72,22 @@ export default function ManagerHomePage() {
           getAllIssues({ branchId: selectedBranchId, status: "open" }),
         ]);
         if (cancelled) return;
-        console.log("loaded reports:", rr.length, "todayReport:", tr?.status ?? "없음");
+        console.log("selected branch:", selectedBranchId);
+        console.log("loaded reports:", rr.map((r) => r.id));
+        console.log("dashboard totals:", {
+          activeMembers: tr?.activeMembers ?? null,
+          ptConsultations: tr?.ptConsultations ?? null,
+          ptRegistrations: tr?.ptRegistrations ?? null,
+          recentCount: rr.length,
+          todayStatus: tr?.status ?? "없음",
+        });
         setTodayReport(tr);
         setYesterdayReport(yr);
         setRecentReports(rr);
         setCampaigns(ac);
         setIssues(iss);
       } catch (err) {
-        console.error("admin dashboard load error:", err);
+        console.error("dashboard load failed:", err);
         if (!cancelled) setLoadError("데이터를 불러오지 못했습니다.");
       } finally {
         if (!cancelled) setLoading(false);

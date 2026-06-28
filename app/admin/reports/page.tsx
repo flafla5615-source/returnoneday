@@ -69,28 +69,32 @@ export default function AdminReportsPage() {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
-    getAllReports(filterFrom, filterTo)
-      .then((rs) => {
+
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        const rs = await getAllReports(filterFrom, filterTo);
         if (cancelled) return;
         console.log("loaded reports:", rs.length, rs.map((r) => r.id));
         const submitted = rs.filter((r) => r.status === "submitted" || r.status === "locked");
         console.log("submitted reports:", submitted.length);
         setReports(rs);
-        setLoading(false);
-      })
-      .catch((err) => {
+      } catch (err) {
         if (cancelled) return;
-        console.error("admin dashboard load error:", err);
+        console.error("dashboard load failed:", err);
         const code: string = (err as { code?: string })?.code ?? "unknown";
         setError(
           code === "permission-denied"
             ? "데이터 접근 권한이 없습니다. Firestore 관리자 문서의 role/status를 확인하세요. (permission-denied)"
             : `데이터 로드 오류: ${code}`
         );
-        setLoading(false);
-      });
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    void load();
     return () => {
       cancelled = true;
     };

@@ -27,41 +27,53 @@ export default function AdminDashboardPage() {
   const from7 = format(subDays(new Date(today), 6), "yyyy-MM-dd");
 
   useEffect(() => {
-    console.log("admin today:", today);
-    setLoading(true);
-    setError(null);
+    let cancelled = false;
 
-    Promise.all([
-      getAllBranches(),
-      getTodayAllReports(today),
-      getAllIssues(),
-      getAllCampaigns(),
-      getAllReports(from7, today),
-    ])
-      .then(([bs, rs, iss, cps, rs7d]) => {
+    async function load() {
+      setLoading(true);
+      setError(null);
+      console.log("admin today:", today, "from7:", from7);
+      try {
+        const [bs, rs, iss, cps, rs7d] = await Promise.all([
+          getAllBranches(),
+          getTodayAllReports(today),
+          getAllIssues(),
+          getAllCampaigns(),
+          getAllReports(from7, today),
+        ]);
+        if (cancelled) return;
+        const submitted = rs.filter((r) => r.status === "submitted" || r.status === "locked");
         console.log("branches:", bs.length, bs.map((b) => b.name));
         console.log("loaded reports:", rs.length, rs.map((r) => r.id));
-        const submitted = rs.filter((r) => r.status === "submitted" || r.status === "locked");
         console.log("submitted reports:", submitted.length, submitted.map((r) => r.id));
         console.log("7d reports:", rs7d.length);
+        console.log("dashboard totals:", {
+          branches: bs.length,
+          submittedToday: submitted.length,
+          reports7d: rs7d.length,
+        });
         setBranches(bs);
         setReports(rs);
         setReports7d(rs7d);
         setIssues(iss);
         setCampaigns(cps.filter((c) => c.status === "active"));
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.error("admin dashboard load error:", err);
+      } catch (err) {
+        if (cancelled) return;
+        console.error("dashboard load failed:", err);
         const code: string = (err as { code?: string })?.code ?? "unknown";
         setError(
           code === "permission-denied"
             ? "데이터 접근 권한이 없습니다. Firestore 관리자 문서의 role/status를 확인하세요. (permission-denied)"
             : `데이터 로드 오류: ${code}`
         );
-        setLoading(false);
-      });
-  }, [today]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    void load();
+    return () => { cancelled = true; };
+  }, [today, from7]);
 
   if (loading) return <LoadingState />;
 

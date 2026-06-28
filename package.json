@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test:rules": "npx firebase-tools emulators:exec --only firestore \"jest tests/firestore.rules.test.ts\"",
     "create-admin": "node --env-file=.env.local scripts/create-admin.mjs",
-    "seed:dashboard-test": "node --env-file=.env.local scripts/seed-dashboard-test.mjs"
+    "seed:dashboard-test": "node --env-file=.env.local scripts/seed-dashboard-test.mjs",
+    "cleanup:dashboard-test": "node --env-file=.env.local scripts/cleanup-dashboard-test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",

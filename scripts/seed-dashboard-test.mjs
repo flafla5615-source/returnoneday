@@ -18,7 +18,7 @@ import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 
 // ── 상수 ────────────────────────────────────────────────────────────────────
 
-const MANAGER_UID = "dv04IK4ZBwbdr8nN3yKLVWq2CVx2";
+const MANAGER_UID = process.env.TEST_MANAGER_UID;
 const PROJECT_ID = "returnoneday";
 
 const BRANCHES = [
@@ -72,6 +72,7 @@ const missing = [];
 if (!FIREBASE_ADMIN_PROJECT_ID) missing.push("FIREBASE_ADMIN_PROJECT_ID");
 if (!FIREBASE_ADMIN_CLIENT_EMAIL) missing.push("FIREBASE_ADMIN_CLIENT_EMAIL");
 if (!FIREBASE_ADMIN_PRIVATE_KEY) missing.push("FIREBASE_ADMIN_PRIVATE_KEY");
+if (!MANAGER_UID) missing.push("TEST_MANAGER_UID");
 
 if (missing.length > 0) {
   console.error("\n누락된 환경변수:");
@@ -80,6 +81,7 @@ if (missing.length > 0) {
   console.error("  FIREBASE_ADMIN_PROJECT_ID=returnoneday");
   console.error("  FIREBASE_ADMIN_CLIENT_EMAIL=<서비스 계정 이메일>");
   console.error('  FIREBASE_ADMIN_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"');
+  console.error("  TEST_MANAGER_UID=<테스트 지점장 Firebase Auth UID>");
   console.error("\n서비스 계정 키: Firebase Console > 프로젝트 설정 > 서비스 계정 > 새 비공개 키 생성\n");
   process.exit(1);
 }
