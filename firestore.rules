@@ -61,6 +61,29 @@ service cloud.firestore {
         && isEditableReportStatus(getReportData(reportId).status);
     }
 
+    function isAbnormalSubmittedReport(data) {
+      return data.status == 'submitted'
+        && data.activeMembers == null
+        && data.inquiries == null
+        && data.ptConsultations == null
+        && data.ptRegistrations == null
+        && data.reRegistrations == null
+        && data.comebackMembers == null
+        && data.happyCalls == null;
+    }
+
+    function canManagerReopenAbnormalSubmittedReport() {
+      return isActiveManager()
+        && resource.data.branchId in getUserData().branchIds
+        && isAbnormalSubmittedReport(resource.data)
+        && request.resource.data.status == 'draft'
+        && request.resource.data.branchId == resource.data.branchId
+        && request.resource.data.reportDate == resource.data.reportDate
+        && request.resource.data.writerUid == resource.data.writerUid
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']);
+    }
+
     function validIssueData(reportId, data) {
       return data.reportId == reportId
         && data.branchId == getReportData(reportId).branchId
@@ -136,7 +159,8 @@ service cloud.firestore {
           && request.resource.data.reportDate == resource.data.reportDate
           && request.resource.data.writerUid == resource.data.writerUid
           && request.resource.data.id == resource.data.id
-          && canManagerTransitionReportStatus(resource.data.status, request.resource.data.status));
+          && canManagerTransitionReportStatus(resource.data.status, request.resource.data.status)) ||
+        canManagerReopenAbnormalSubmittedReport();
 
       allow delete: if isAdmin();
 

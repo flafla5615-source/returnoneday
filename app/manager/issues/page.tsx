@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { FirebaseError } from "firebase/app";
 import { useAuth } from "@/contexts/AuthContext";
 import { getBranchesByIds } from "@/services/branches";
 import { getAllIssues } from "@/services/issues";
@@ -19,6 +20,8 @@ export default function ManagerIssuesPage() {
   const [selectedBranchId, setSelectedBranchId] = useState("");
   const [issues, setIssues] = useState<Issue[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
 
   useEffect(() => {
     if (!profile) return;
@@ -29,6 +32,7 @@ export default function ManagerIssuesPage() {
         setBranches([]);
         setSelectedBranchId("");
         setIssues([]);
+        setError("배정된 지점이 없습니다. 관리자에게 지점 배정을 요청하세요.");
         setLoading(false);
       });
       return () => {
@@ -42,6 +46,10 @@ export default function ManagerIssuesPage() {
       setSelectedBranchId((current) =>
         current && bs.some((branch) => branch.id === current) ? current : (bs[0]?.id ?? "")
       );
+      if (bs.length === 0) {
+        setError("배정된 지점이 없습니다. 관리자에게 지점 배정을 요청하세요.");
+        setLoading(false);
+      }
     });
 
     return () => {
@@ -50,22 +58,79 @@ export default function ManagerIssuesPage() {
   }, [profile]);
 
   useEffect(() => {
-    if (!selectedBranchId) return;
+    if (!selectedBranchId) {
+      let cancelled = false;
+      Promise.resolve().then(() => {
+        if (!cancelled) setLoading(false);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
 
     let cancelled = false;
-    getAllIssues({ branchId: selectedBranchId }).then((iss) => {
-      if (cancelled) return;
-      setIssues(iss);
-      setLoading(false);
-    });
+
+    async function loadIssues() {
+      setLoading(true);
+      setError(null);
+
+      const isAssignedBranch = branches.some((branch) => branch.id === selectedBranchId);
+      if (branches.length > 0 && !isAssignedBranch) {
+        if (!cancelled) {
+          setIssues([]);
+          setError("선택한 지점이 현재 계정에 배정되어 있지 않습니다.");
+          setLoading(false);
+        }
+        return;
+      }
+
+      try {
+        const result = await getAllIssues({
+          branchId: selectedBranchId,
+        });
+
+        if (cancelled) return;
+        setIssues(result);
+      } catch (error) {
+        console.error("manager issues load failed:", error);
+        if (error instanceof FirebaseError) {
+          console.error("manager issues firebase code:", error.code);
+        }
+
+        if (cancelled) return;
+
+        if (
+          error instanceof FirebaseError &&
+          error.code === "permission-denied"
+        ) {
+          setError("운영 이슈 조회 권한이 없습니다.");
+        } else if (
+          error instanceof FirebaseError &&
+          error.code === "failed-precondition"
+        ) {
+          setError("운영 이슈 조회에 필요한 Firestore 인덱스가 아직 준비되지 않았습니다.");
+        } else {
+          setError("운영 이슈를 불러오지 못했습니다.");
+        }
+
+        setIssues([]);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void loadIssues();
 
     return () => {
       cancelled = true;
     };
-  }, [selectedBranchId]);
+  }, [branches, retryNonce, selectedBranchId]);
 
   function handleBranchChange(nextBranchId: string) {
     setLoading(true);
+    setError(null);
     setIssues([]);
     setSelectedBranchId(nextBranchId);
   }
@@ -89,7 +154,21 @@ export default function ManagerIssuesPage() {
         )}
       </div>
 
-      {issues.length === 0 ? (
+      {error ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-5 space-y-3">
+          <div>
+            <p className="text-sm font-semibold text-red-700">운영 이슈 로드 실패</p>
+            <p className="mt-1 text-sm text-red-600">{error}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setRetryNonce((value) => value + 1)}
+            className="px-3 py-2 text-sm font-semibold text-white bg-red-600 rounded-lg hover:bg-red-700"
+          >
+            다시 시도
+          </button>
+        </div>
+      ) : issues.length === 0 ? (
         <EmptyState title="운영 이슈가 없습니다" description="훌륭합니다!" />
       ) : (
         <div className="space-y-3">

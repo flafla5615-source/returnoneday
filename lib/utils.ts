@@ -1,6 +1,7 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { format, toZonedTime } from "date-fns-tz";
+import type { DailyReport } from "@/types";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -62,6 +63,24 @@ export function diffLabel(current: number | null, previous: number | null): stri
 
 export function getReportId(branchId: string, date: string): string {
   return `${branchId}_${date}`.replaceAll("/", "-");
+}
+
+const REQUIRED_REPORT_FIELDS = [
+  "activeMembers",
+  "inquiries",
+  "ptConsultations",
+  "ptRegistrations",
+  "reRegistrations",
+  "comebackMembers",
+  "happyCalls",
+] as const;
+
+export function isAbnormalSubmittedReport(
+  report: Pick<DailyReport, "status" | (typeof REQUIRED_REPORT_FIELDS)[number]> | null | undefined
+): boolean {
+  return !!report &&
+    report.status === "submitted" &&
+    REQUIRED_REPORT_FIELDS.every((field) => report[field] === null);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

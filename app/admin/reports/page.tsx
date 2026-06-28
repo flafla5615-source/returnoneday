@@ -16,6 +16,7 @@ import {
   formatDate,
   formatDateTime,
   formatPercent,
+  isAbnormalSubmittedReport,
   todayYMD,
 } from "@/lib/utils";
 import type { Branch, DailyReport, Issue, ReportStatus, UserProfile } from "@/types";
@@ -154,6 +155,7 @@ export default function AdminReportsPage() {
     const totalPtRegistrations = submitted.reduce((sum, report) => sum + (report.ptRegistrations ?? 0), 0);
     const reportIds = new Set(filtered.map((report) => report.id));
     const openIssues = issues.filter((issue) => reportIds.has(issue.reportId) && issue.status !== "resolved").length;
+    const abnormalSubmitted = filtered.filter(isAbnormalSubmittedReport).length;
 
     return {
       totalReports: filtered.length,
@@ -164,6 +166,7 @@ export default function AdminReportsPage() {
       totalInquiries,
       ptConversionRate: calcPtConversionRate(totalPtConsultations, totalPtRegistrations),
       openIssues,
+      abnormalSubmitted,
     };
   }, [filtered, issues]);
 
@@ -289,12 +292,13 @@ export default function AdminReportsPage() {
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 flex-1">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 flex-1">
             <SummaryPill label="보고" value={`${summary.totalReports}건`} />
             <SummaryPill label="제출" value={`${summary.submitted}건`} />
             <SummaryPill label="수정요청" value={`${summary.revisionRequired}건`} tone="orange" />
             <SummaryPill label="잠금" value={`${summary.locked}건`} />
             <SummaryPill label="운영이슈" value={`${summary.openIssues}건`} tone={summary.openIssues > 0 ? "red" : "gray"} />
+            <SummaryPill label="비정상" value={`${summary.abnormalSubmitted}건`} tone={summary.abnormalSubmitted > 0 ? "orange" : "gray"} />
             <SummaryPill label="유효회원" value={`${summary.totalActiveMembers.toLocaleString()}명`} />
             <SummaryPill label="PT 전환율" value={formatPercent(summary.ptConversionRate)} />
           </div>
@@ -345,7 +349,16 @@ export default function AdminReportsPage() {
                     <td className="px-3 py-3 whitespace-nowrap">{branch?.region ?? "-"}</td>
                     <td className="px-3 py-3 whitespace-nowrap">{branch?.name ?? report.branchId}</td>
                     <td className="px-3 py-3 whitespace-nowrap">{writer?.name ?? "-"}</td>
-                    <td className="px-3 py-3"><ReportStatusBadge status={report.status} /></td>
+                    <td className="px-3 py-3">
+                      <div className="flex flex-col items-start gap-1">
+                        <ReportStatusBadge status={report.status} />
+                        {isAbnormalSubmittedReport(report) && (
+                          <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                            비정상 제출 데이터
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-3 py-3">{report.activeMembers ?? "-"}</td>
                     <td className="px-3 py-3">{report.inquiries ?? "-"}</td>
                     <td className="px-3 py-3">{report.ptConsultations ?? "-"}</td>

@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { FirebaseError } from "firebase/app";
 import { useAuth } from "@/contexts/AuthContext";
 import { getBranchesByIds } from "@/services/branches";
-import { getReport, upsertReport } from "@/services/reports";
+import { getReport, reopenAbnormalSubmittedReport, upsertReport } from "@/services/reports";
 import { getIssuesByReport, upsertIssues } from "@/services/issues";
 import { getActiveCampaigns, upsertCampaignResult, getCampaignResultByReport } from "@/services/campaigns";
 import ReportStepper from "@/components/reports/ReportStepper";
@@ -19,6 +19,7 @@ import {
   calcPtConversionRate,
   formatPercent,
   getReportId,
+  isAbnormalSubmittedReport,
 } from "@/lib/utils";
 import type { Branch, DailyReport, Issue, Campaign } from "@/types";
 import { format, subDays } from "date-fns";
@@ -398,6 +399,30 @@ export default function NewReportPage() {
     }
   }
 
+  async function handleRewriteAbnormalReport() {
+    if (!existing) return;
+    setSubmitError("");
+    setSaving(true);
+    try {
+      await reopenAbnormalSubmittedReport(existing.id);
+      setExisting({ ...existing, status: "draft" });
+    } catch (err) {
+      console.error("abnormal report reopen failed:", err);
+      if (err instanceof FirebaseError) {
+        console.error("firebase code:", err.code);
+        console.error("firebase message:", err.message);
+      }
+      const code = err instanceof FirebaseError ? err.code : (err as { code?: string })?.code ?? "unknown";
+      setSubmitError(
+        code === "permission-denied"
+          ? "보고서를 다시 작성할 권한이 없습니다. 관리자에게 문의하세요. (permission-denied)"
+          : `보고서를 다시 작성 상태로 변경하지 못했습니다. (${code})`
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const convRate = calcPtConversionRate(ptConsultations, ptRegistrations);
 
   if (loading) return <LoadingState />;
@@ -406,12 +431,7 @@ export default function NewReportPage() {
   const isSubmitted = existing?.status === "submitted";
   const isRevisionRequired = existing?.status === "revision_required";
   const canEditReport = !existing || existing.status === "draft" || isRevisionRequired;
-  const isDataMissing = isSubmitted && existing !== null && (
-    existing.activeMembers === null &&
-    existing.inquiries === null &&
-    existing.ptConsultations === null &&
-    existing.ptRegistrations === null
-  );
+  const isDataMissing = isAbnormalSubmittedReport(existing);
 
   return (
     <div className="max-w-2xl mx-auto space-y-4">
@@ -451,8 +471,16 @@ export default function NewReportPage() {
         </div>
       )}
       {isDataMissing && (
-        <div className="bg-amber-50 text-amber-700 border border-amber-200 rounded-xl px-4 py-3 text-sm">
-          제출 데이터 확인 필요: 제출 기록은 있으나 주요 데이터가 비어 있습니다. 관리자에게 문의하세요.
+        <div className="bg-amber-50 text-amber-700 border border-amber-200 rounded-xl px-4 py-3 text-sm space-y-3">
+          <p>제출 데이터 확인 필요: 제출 기록은 있으나 주요 데이터가 비어 있습니다.</p>
+          <button
+            type="button"
+            onClick={handleRewriteAbnormalReport}
+            disabled={saving}
+            className="px-3 py-2 bg-amber-600 text-white rounded-lg text-sm font-semibold hover:bg-amber-700 disabled:opacity-50"
+          >
+            {saving ? "준비 중..." : "보고 다시 작성하기"}
+          </button>
         </div>
       )}
 

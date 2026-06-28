@@ -9,7 +9,7 @@ import { getIssuesByReport } from "@/services/issues";
 import { getBranchesByIds } from "@/services/branches";
 import { ReportStatusBadge, SeverityBadge, IssueStatusBadge } from "@/components/common/StatusBadge";
 import LoadingState from "@/components/common/LoadingState";
-import { formatDate, formatDateTime, calcPtConversionRate, formatPercent, getExpiringTmTotal, getUnregisteredTmTotal, getOfflinePromoTotal } from "@/lib/utils";
+import { formatDate, formatDateTime, calcPtConversionRate, formatPercent, getExpiringTmTotal, getUnregisteredTmTotal, getOfflinePromoTotal, isAbnormalSubmittedReport } from "@/lib/utils";
 import type { DailyReport, Issue, ReportStatus } from "@/types";
 import { ChevronLeftIcon } from "lucide-react";
 
@@ -63,6 +63,7 @@ export default function AdminReportDetailPage() {
   if (!report) return <div className="p-6 text-gray-500">보고서를 찾을 수 없습니다.</div>;
 
   const convRate = calcPtConversionRate(report.ptConsultations, report.ptRegistrations);
+  const isAbnormalSubmitted = isAbnormalSubmittedReport(report);
   const canRequestRevision = report.status === "submitted";
   const canLock = report.status === "submitted" || report.status === "revision_required";
   const canUnlock = report.status === "locked";
@@ -77,8 +78,21 @@ export default function AdminReportDetailPage() {
           <h1 className="text-base font-bold text-gray-900">{formatDate(report.reportDate)} 보고서</h1>
           <p className="text-xs text-gray-400">{branchName || report.branchId}</p>
         </div>
-        <ReportStatusBadge status={report.status} />
+        <div className="flex flex-col items-end gap-1">
+          <ReportStatusBadge status={report.status} />
+          {isAbnormalSubmitted && (
+            <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+              비정상 제출 데이터
+            </span>
+          )}
+        </div>
       </div>
+
+      {isAbnormalSubmitted && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+          제출 기록은 있으나 주요 데이터가 비어 있습니다. 지점장에게 보고 다시 작성을 안내하세요.
+        </div>
+      )}
 
       <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
         <Row label="보고 날짜" value={formatDate(report.reportDate)} />

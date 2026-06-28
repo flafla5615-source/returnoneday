@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { getBranchesByIds } from "@/services/branches";
-import { getReport, getRecentReports } from "@/services/reports";
+import { getReport, getRecentReports, reopenAbnormalSubmittedReport } from "@/services/reports";
 import { getActiveCampaigns } from "@/services/campaigns";
 import { getAllIssues } from "@/services/issues";
 import KpiCard from "@/components/dashboard/KpiCard";
@@ -17,12 +18,14 @@ import {
   calcPtConversionRate,
   formatPercent,
   diffLabel,
+  isAbnormalSubmittedReport,
 } from "@/lib/utils";
 import type { Branch, DailyReport, Campaign, Issue } from "@/types";
 import { format, subDays } from "date-fns";
 import { AlertCircleIcon, PlusCircleIcon } from "lucide-react";
 
 export default function ManagerHomePage() {
+  const router = useRouter();
   const { profile } = useAuth();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState("");
@@ -33,6 +36,7 @@ export default function ManagerHomePage() {
   const [issues, setIssues] = useState<Issue[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [rewriteLoading, setRewriteLoading] = useState(false);
 
   const today = todayYMD();
   const yesterday = format(subDays(new Date(today), 1), "yyyy-MM-dd");
@@ -134,7 +138,29 @@ export default function ManagerHomePage() {
     );
   }
 
-  const reportStatus = todayReport?.status ?? null;
+  const isTodayReportAbnormal = isAbnormalSubmittedReport(todayReport);
+  const reportStatus = isTodayReportAbnormal ? null : (todayReport?.status ?? null);
+
+  async function handleRewriteAbnormalReport() {
+    if (!todayReport) return;
+    setRewriteLoading(true);
+    setLoadError(null);
+    try {
+      await reopenAbnormalSubmittedReport(todayReport.id);
+      router.push(`/manager/report/new?branchId=${todayReport.branchId}&date=${todayReport.reportDate}`);
+    } catch (error) {
+      console.error("abnormal report reopen failed:", error);
+      const code = (error as { code?: string })?.code ?? "unknown";
+      console.error("abnormal report reopen code:", code);
+      setLoadError(
+        code === "permission-denied"
+          ? "보고서를 다시 작성할 권한이 없습니다. 관리자에게 문의하세요. (permission-denied)"
+          : "보고서를 다시 작성 상태로 변경하지 못했습니다."
+      );
+    } finally {
+      setRewriteLoading(false);
+    }
+  }
 
   return (
     <div className="max-w-3xl mx-auto space-y-5">
@@ -183,6 +209,9 @@ export default function ManagerHomePage() {
             {reportStatus === "revision_required" && (
               <p className="text-xs text-orange-600 mt-1">수정 요청이 있습니다.</p>
             )}
+            {isTodayReportAbnormal && (
+              <p className="text-xs text-amber-600 mt-1">제출 기록은 있으나 주요 데이터가 비어 있습니다.</p>
+            )}
           </div>
           <div className="text-right">
             <p className="text-xs text-gray-400">오늘 날짜</p>
@@ -190,7 +219,7 @@ export default function ManagerHomePage() {
             {selectedBranch && <p className="text-xs text-gray-400 mt-0.5">{selectedBranch.name}</p>}
           </div>
         </div>
-        {(!reportStatus || reportStatus === "draft" || reportStatus === "revision_required") && (
+        {!isTodayReportAbnormal && (!reportStatus || reportStatus === "draft" || reportStatus === "revision_required") && (
           <Link
             href={`/manager/report/new?branchId=${selectedBranchId}&date=${today}`}
             className="mt-3 flex items-center justify-center gap-2 w-full py-2.5 bg-red-600 text-white rounded-lg text-sm font-semibold hover:bg-red-700 transition-colors"
@@ -199,10 +228,20 @@ export default function ManagerHomePage() {
             오늘 보고 작성하기
           </Link>
         )}
+        {isTodayReportAbnormal && (
+          <button
+            type="button"
+            onClick={handleRewriteAbnormalReport}
+            disabled={rewriteLoading}
+            className="mt-2 flex items-center justify-center gap-2 w-full py-2.5 bg-amber-600 text-white rounded-lg text-sm font-semibold hover:bg-amber-700 transition-colors disabled:opacity-50"
+          >
+            {rewriteLoading ? "준비 중..." : "보고 다시 작성하기"}
+          </button>
+        )}
       </div>
 
       {/* KPI Grid */}
-      {todayReport && (
+      {todayReport && !isTodayReportAbnormal && (
         <div>
           <p className="text-sm font-semibold text-gray-700 mb-2">오늘 주요 지표</p>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">

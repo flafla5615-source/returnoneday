@@ -2,14 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
-import { getReportById, getReportComments } from "@/services/reports";
+import { getReportById, getReportComments, reopenAbnormalSubmittedReport } from "@/services/reports";
 import { getBranchesByIds } from "@/services/branches";
 import { ReportStatusBadge } from "@/components/common/StatusBadge";
 import LoadingState from "@/components/common/LoadingState";
 import EmptyState from "@/components/common/EmptyState";
-import { formatDate, formatDateTime, formatPercent, calcPtConversionRate, getExpiringTmTotal, getUnregisteredTmTotal, getOfflinePromoTotal } from "@/lib/utils";
+import { formatDate, formatDateTime, formatPercent, calcPtConversionRate, getExpiringTmTotal, getUnregisteredTmTotal, getOfflinePromoTotal, isAbnormalSubmittedReport } from "@/lib/utils";
 import type { DailyReport, ReportComment } from "@/types";
 import { ChevronLeftIcon } from "lucide-react";
 
@@ -24,11 +25,13 @@ function Row({ label, value }: { label: string; value: string | number }) {
 
 export default function ReportDetailPage() {
   const { reportId } = useParams<{ reportId: string }>();
+  const router = useRouter();
   const { profile } = useAuth();
   const [report, setReport] = useState<DailyReport | null | undefined>(undefined);
   const [comments, setComments] = useState<ReportComment[]>([]);
   const [branchName, setBranchName] = useState("");
   const [loadError, setLoadError] = useState("");
+  const [rewriteLoading, setRewriteLoading] = useState(false);
 
   useEffect(() => {
     if (!reportId) return;
@@ -71,6 +74,27 @@ export default function ReportDetailPage() {
 
   const convRate = calcPtConversionRate(report.ptConsultations, report.ptRegistrations);
   const revisionComments = comments.filter((comment) => comment.type === "revision_request");
+  const isAbnormalSubmitted = isAbnormalSubmittedReport(report);
+
+  async function handleRewriteAbnormalReport() {
+    if (!report) return;
+    setRewriteLoading(true);
+    try {
+      await reopenAbnormalSubmittedReport(report.id);
+      router.push(`/manager/report/new?branchId=${report.branchId}&date=${report.reportDate}`);
+    } catch (error) {
+      console.error("abnormal report reopen failed:", error);
+      const code = (error as { code?: string })?.code ?? "unknown";
+      console.error("abnormal report reopen code:", code);
+      setLoadError(
+        code === "permission-denied"
+          ? "보고서를 다시 작성할 권한이 없습니다. 관리자에게 문의하세요. (permission-denied)"
+          : "보고서를 다시 작성 상태로 변경하지 못했습니다."
+      );
+    } finally {
+      setRewriteLoading(false);
+    }
+  }
 
   return (
     <div className="max-w-2xl mx-auto space-y-4">
@@ -84,6 +108,21 @@ export default function ReportDetailPage() {
         </div>
         <ReportStatusBadge status={report.status} />
       </div>
+
+      {isAbnormalSubmitted && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 space-y-3">
+          <p>제출 기록은 있으나 주요 데이터가 비어 있습니다.</p>
+          <button
+            type="button"
+            onClick={handleRewriteAbnormalReport}
+            disabled={rewriteLoading}
+            className="px-3 py-2 bg-amber-600 text-white rounded-lg text-sm font-semibold hover:bg-amber-700 disabled:opacity-50"
+          >
+            {rewriteLoading ? "준비 중..." : "보고 다시 작성하기"}
+          </button>
+          {loadError && <p className="text-xs text-red-600">{loadError}</p>}
+        </div>
+      )}
 
       {/* Timestamps */}
       <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">

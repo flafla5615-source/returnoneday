@@ -14,7 +14,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { DailyReport, ReportStatus, ReportComment } from "@/types";
-import { getReportId, removeUndefinedDeep } from "@/lib/utils";
+import { getReportId, isAbnormalSubmittedReport, removeUndefinedDeep } from "@/lib/utils";
 
 export async function getReport(
   branchId: string,
@@ -190,6 +190,24 @@ export async function updateReportStatus(
       "revision_request"
     );
   }
+}
+
+export async function reopenAbnormalSubmittedReport(reportId: string): Promise<void> {
+  const ref = doc(db, "dailyReports", reportId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    throw new Error("report-not-found");
+  }
+
+  const report = snap.data() as DailyReport;
+  if (!isAbnormalSubmittedReport(report)) {
+    throw new Error("report-is-not-abnormal-submitted");
+  }
+
+  await updateDoc(ref, {
+    status: "draft",
+    updatedAt: serverTimestamp(),
+  });
 }
 
 export async function addReportComment(
