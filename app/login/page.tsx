@@ -164,7 +164,8 @@ export default function LoginPage() {
                 <button
                   type="button"
                   onClick={() => setShowPw(!showPw)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
+                  aria-label={showPw ? "비밀번호 숨기기" : "비밀번호 보기"}
+                  className="absolute right-0 top-0 h-full w-11 flex items-center justify-center text-gray-400"
                 >
                   {showPw ? <EyeOffIcon className="w-4 h-4" /> : <EyeIcon className="w-4 h-4" />}
                 </button>
@@ -172,12 +173,12 @@ export default function LoginPage() {
               {errors.password && <p className="text-xs text-red-500 mt-1">{errors.password.message}</p>}
             </div>
 
-            <div className="flex items-center justify-between">
-              <label className="flex items-center gap-2 text-sm text-gray-600">
-                <input {...register("remember")} type="checkbox" className="rounded" />
+            <div className="flex items-center justify-between gap-3">
+              <label className="min-h-[44px] flex items-center gap-2 py-2 pr-2 text-sm text-gray-600 cursor-pointer">
+                <input {...register("remember")} type="checkbox" className="w-4 h-4 rounded" />
                 로그인 상태 유지
               </label>
-              <Link href="/forgot-password" className="text-sm text-red-600 hover:underline">
+              <Link href="/forgot-password" className="min-h-[44px] inline-flex items-center text-sm text-red-600 hover:underline">
                 비밀번호 찾기
               </Link>
             </div>
@@ -197,7 +198,7 @@ export default function LoginPage() {
 
           <p className="text-center text-sm text-gray-500 mt-6">
             계정이 없으신가요?{" "}
-            <Link href="/signup" className="text-red-600 font-medium hover:underline">
+            <Link href="/signup" className="min-h-[44px] inline-flex items-center text-red-600 font-medium hover:underline">
               관리자에게 문의하세요.
             </Link>
           </p>

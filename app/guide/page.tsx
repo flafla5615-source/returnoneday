@@ -105,25 +105,68 @@ const GLOBAL_FEATURES: Feature[] = [
 ];
 
 function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
 
-  function handleCopy() {
-    void navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    });
+  function resetStatus() {
+    window.setTimeout(() => setCopyStatus("idle"), 1800);
   }
+
+  function fallbackCopy(value: string): boolean {
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+
+    let copied = false;
+    try {
+      copied = document.execCommand("copy");
+    } finally {
+      document.body.removeChild(textarea);
+    }
+
+    return copied;
+  }
+
+  async function handleCopy() {
+    try {
+      if (fallbackCopy(text)) {
+        setCopyStatus("copied");
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        setCopyStatus("copied");
+      } else if (!fallbackCopy(text)) {
+        throw new Error("copy-failed");
+      }
+    } catch {
+      setCopyStatus("failed");
+    } finally {
+      resetStatus();
+    }
+  }
+
+  const buttonText =
+    copyStatus === "copied"
+      ? "✅ 복사됨"
+      : copyStatus === "failed"
+        ? "복사 실패 · 길게 눌러 복사"
+        : `📋 "${text}" 복사`;
 
   return (
     <button
       onClick={handleCopy}
+      aria-live="polite"
       style={{
         display: "inline-flex",
         alignItems: "center",
+        justifyContent: "center",
         gap: 6,
         marginTop: 10,
-        padding: "7px 14px",
-        background: copied ? "#27ae60" : BRAND,
+        minHeight: 44,
+        padding: "10px 14px",
+        background: copyStatus === "copied" ? "#27ae60" : copyStatus === "failed" ? "#7f1d1d" : BRAND,
         color: "#fff",
         border: "none",
         borderRadius: 8,
@@ -134,7 +177,7 @@ function CopyButton({ text }: { text: string }) {
         WebkitTapHighlightColor: "transparent",
       }}
     >
-      {copied ? "✅ 복사됨" : `📋 "${text}" 복사`}
+      {buttonText}
     </button>
   );
 }

@@ -40,7 +40,7 @@ export default function ForgotPasswordPage() {
             <p className="text-sm text-gray-600 mb-4">
               <strong>{email}</strong>으로 비밀번호 재설정 이메일을 보냈습니다.
             </p>
-            <Link href="/login" className="text-red-600 text-sm font-medium hover:underline">
+            <Link href="/login" className="min-h-[44px] inline-flex items-center justify-center text-red-600 text-sm font-medium hover:underline">
               로그인으로 돌아가기
             </Link>
           </div>
@@ -63,7 +63,7 @@ export default function ForgotPasswordPage() {
               {loading ? "전송 중..." : "재설정 이메일 보내기"}
             </button>
             <div className="text-center">
-              <Link href="/login" className="text-sm text-gray-500 hover:underline">로그인으로 돌아가기</Link>
+              <Link href="/login" className="min-h-[44px] inline-flex items-center justify-center text-sm text-gray-500 hover:underline">로그인으로 돌아가기</Link>
             </div>
           </form>
         )}
