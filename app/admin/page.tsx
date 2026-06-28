@@ -10,17 +10,21 @@ import SubmissionDonut from "@/components/dashboard/SubmissionDonut";
 import ConversionFunnel from "@/components/dashboard/ConversionFunnel";
 import LoadingState from "@/components/common/LoadingState";
 import { formatDate, todayYMD, calcPtConversionRate, formatPercent } from "@/lib/utils";
+import { getAllReports } from "@/services/reports";
 import type { Branch, DailyReport, Issue, Campaign } from "@/types";
+import { format, subDays } from "date-fns";
 
 export default function AdminDashboardPage() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [reports, setReports] = useState<DailyReport[]>([]);
+  const [reports7d, setReports7d] = useState<DailyReport[]>([]);
   const [issues, setIssues] = useState<Issue[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const today = todayYMD();
+  const from7 = format(subDays(new Date(today), 6), "yyyy-MM-dd");
 
   useEffect(() => {
     console.log("admin today:", today);
@@ -32,14 +36,17 @@ export default function AdminDashboardPage() {
       getTodayAllReports(today),
       getAllIssues(),
       getAllCampaigns(),
+      getAllReports(from7, today),
     ])
-      .then(([bs, rs, iss, cps]) => {
+      .then(([bs, rs, iss, cps, rs7d]) => {
         console.log("branches:", bs.length, bs.map((b) => b.name));
         console.log("loaded reports:", rs.length, rs.map((r) => r.id));
         const submitted = rs.filter((r) => r.status === "submitted" || r.status === "locked");
         console.log("submitted reports:", submitted.length, submitted.map((r) => r.id));
+        console.log("7d reports:", rs7d.length);
         setBranches(bs);
         setReports(rs);
+        setReports7d(rs7d);
         setIssues(iss);
         setCampaigns(cps.filter((c) => c.status === "active"));
         setLoading(false);
@@ -80,6 +87,22 @@ export default function AdminDashboardPage() {
   const totalComeback = submitted.reduce((acc, r) => acc + (r.comebackMembers ?? 0), 0);
 
   const overallConvRate = calcPtConversionRate(totalPtConsult, totalPtReg);
+
+  // 7일 집계 — 중복 보고 방지: 지점+날짜 기준 최신 1건만 유효
+  const uniqueKey = (r: DailyReport) => `${r.branchId}_${r.reportDate}`;
+  const seen7d = new Map<string, DailyReport>();
+  for (const r of reports7d) {
+    const k = uniqueKey(r);
+    if (!seen7d.has(k)) seen7d.set(k, r);
+  }
+  const submitted7d = [...seen7d.values()].filter(
+    (r) => r.status === "submitted" || r.status === "locked"
+  );
+  const total7dPtConsult = submitted7d.reduce((acc, r) => acc + (r.ptConsultations ?? 0), 0);
+  const total7dPtReg = submitted7d.reduce((acc, r) => acc + (r.ptRegistrations ?? 0), 0);
+  const total7dReReg = submitted7d.reduce((acc, r) => acc + (r.reRegistrations ?? 0), 0);
+  const total7dComeback = submitted7d.reduce((acc, r) => acc + (r.comebackMembers ?? 0), 0);
+  const convRate7d = calcPtConversionRate(total7dPtConsult, total7dPtReg);
 
   const openIssues = issues.filter((i) => i.status !== "resolved");
   const criticalIssues = openIssues.filter((i) => i.severity === "critical");
@@ -143,18 +166,46 @@ export default function AdminDashboardPage() {
 
       {/* Today overall metrics */}
       <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-        <p className="text-sm font-semibold text-gray-700 mb-3">오늘 주요 지표 (전체)</p>
+        <p className="text-sm font-semibold text-gray-700 mb-3">오늘 지표 (전체)</p>
         <div className="mb-4">
           <ConversionFunnel
             inquiries={totalInquiries}
             consultations={totalPtConsult}
             registrations={totalPtReg}
           />
-          <p className="text-xs text-gray-400 mt-2">전체 PT 전환율: <strong>{formatPercent(overallConvRate)}</strong></p>
+          <p className="text-xs text-gray-400 mt-2">오늘 PT 전환율: <strong>{formatPercent(overallConvRate)}</strong></p>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <KpiCard label="재등록" value={totalReReg} unit="명" />
           <KpiCard label="컴백회원" value={totalComeback} unit="명" />
+        </div>
+      </div>
+
+      {/* 7-day aggregate */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-sm font-semibold text-gray-700">최근 7일 실적 (전 지점 합산)</p>
+          <span className="text-xs text-gray-400">{formatDate(from7)} ~ {formatDate(today)}</span>
+        </div>
+        <div className="mb-4">
+          <ConversionFunnel
+            inquiries={submitted7d.reduce((acc, r) => acc + (r.inquiries ?? 0), 0)}
+            consultations={total7dPtConsult}
+            registrations={total7dPtReg}
+          />
+          <p className="text-xs text-gray-400 mt-2">
+            7일 PT 전환율:{" "}
+            <strong className="text-gray-700">{formatPercent(convRate7d)}</strong>
+            <span className="ml-2 text-gray-400">
+              ({total7dPtReg}/{total7dPtConsult} × 100)
+            </span>
+          </p>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <KpiCard label="PT 상담" value={total7dPtConsult} unit="건" />
+          <KpiCard label="PT 등록" value={total7dPtReg} unit="건" />
+          <KpiCard label="재등록" value={total7dReReg} unit="명" />
+          <KpiCard label="컴백회원" value={total7dComeback} unit="명" />
         </div>
       </div>
 

@@ -43,7 +43,12 @@ export default function ManagerHomePage() {
     getBranchesByIds(profile.branchIds).then((bs) => {
       console.log("branches:", bs.length, bs.map((b) => b.name));
       setBranches(bs);
-      if (bs.length > 0) setSelectedBranchId(bs[0].id);
+      if (bs.length > 0) {
+        const storageKey = `returnlife_branch_${profile.uid}`;
+        const saved = localStorage.getItem(storageKey);
+        const restored = bs.find((b) => b.id === saved);
+        setSelectedBranchId(restored ? restored.id : bs[0].id);
+      }
       if (bs.length === 0) setLoading(false);
     }).catch((err) => {
       console.error("admin dashboard load error:", err);
@@ -137,8 +142,10 @@ export default function ManagerHomePage() {
           <select
             value={selectedBranchId}
             onChange={(e) => {
+              const newId = e.target.value;
               setLoading(true);
-              setSelectedBranchId(e.target.value);
+              setSelectedBranchId(newId);
+              if (profile) localStorage.setItem(`returnlife_branch_${profile.uid}`, newId);
             }}
             className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
           >
