@@ -30,6 +30,24 @@ export interface Branch {
   updatedAt: Timestamp;
 }
 
+// ─── TM & Promotion Breakdowns ──────────────────────────────────────────────
+
+export interface TmBreakdown {
+  phone: number;
+  sms: number;
+  kakao: number;
+  other: number;
+}
+
+export interface OfflinePromotionBreakdown {
+  flyer: number;
+  placard: number;
+  banner: number;
+  partnership: number;
+  event: number;
+  other: number;
+}
+
 // ─── Daily Report ────────────────────────────────────────────────────────────
 
 export type ReportStatus = "draft" | "submitted" | "revision_required" | "locked";
@@ -52,14 +70,22 @@ export interface DailyReport {
   newHappyCalls: number | null;
   existingHappyCalls: number | null;
 
-  // Step 2 - TM & Promotion
-  expiringTmCount: number | null;
-  expiringTmMethods: string[];
-  unregisteredTmCount: number | null;
-  unregisteredTmMethods: string[];
-  offlinePromotionCount: number | null;
-  offlinePromotionMethods: string[];
+  // Step 2 - TM & Promotion (new per-channel structure)
+  expiringTm?: TmBreakdown;
+  expiringTmTotal?: number;
+  unregisteredTm?: TmBreakdown;
+  unregisteredTmTotal?: number;
+  offlinePromotion?: OfflinePromotionBreakdown;
+  offlinePromotionTotal?: number;
   promotionMemo?: string;
+
+  // Legacy TM & Promotion fields (optional — kept for backward compat)
+  expiringTmCount?: number | null;
+  expiringTmMethods?: string[];
+  unregisteredTmCount?: number | null;
+  unregisteredTmMethods?: string[];
+  offlinePromotionCount?: number | null;
+  offlinePromotionMethods?: string[];
 
   createdAt: Timestamp;
   updatedAt: Timestamp;

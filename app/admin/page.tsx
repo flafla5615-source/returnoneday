@@ -9,7 +9,7 @@ import KpiCard from "@/components/dashboard/KpiCard";
 import SubmissionDonut from "@/components/dashboard/SubmissionDonut";
 import ConversionFunnel from "@/components/dashboard/ConversionFunnel";
 import LoadingState from "@/components/common/LoadingState";
-import { formatDate, todayYMD, calcPtConversionRate, formatPercent } from "@/lib/utils";
+import { formatDate, todayYMD, calcPtConversionRate, formatPercent, getExpiringTmTotal, getUnregisteredTmTotal, getOfflinePromoTotal } from "@/lib/utils";
 import { getAllReports } from "@/services/reports";
 import type { Branch, DailyReport, Issue, Campaign } from "@/types";
 import { format, subDays } from "date-fns";
@@ -116,6 +116,21 @@ export default function AdminDashboardPage() {
   const total7dComeback = submitted7d.reduce((acc, r) => acc + (r.comebackMembers ?? 0), 0);
   const convRate7d = calcPtConversionRate(total7dPtConsult, total7dPtReg);
 
+  // 7일 TM 방식별 집계
+  const tm7dPhone   = submitted7d.reduce((a, r) => a + (r.expiringTm?.phone ?? 0) + (r.unregisteredTm?.phone ?? 0), 0);
+  const tm7dSms     = submitted7d.reduce((a, r) => a + (r.expiringTm?.sms ?? 0) + (r.unregisteredTm?.sms ?? 0), 0);
+  const tm7dKakao   = submitted7d.reduce((a, r) => a + (r.expiringTm?.kakao ?? 0) + (r.unregisteredTm?.kakao ?? 0), 0);
+  const tm7dOther   = submitted7d.reduce((a, r) => a + (r.expiringTm?.other ?? 0) + (r.unregisteredTm?.other ?? 0), 0);
+  const tm7dTotal   = submitted7d.reduce((a, r) => a + getExpiringTmTotal(r) + getUnregisteredTmTotal(r), 0);
+  const promo7dFlyer       = submitted7d.reduce((a, r) => a + (r.offlinePromotion?.flyer ?? 0), 0);
+  const promo7dPlacard     = submitted7d.reduce((a, r) => a + (r.offlinePromotion?.placard ?? 0), 0);
+  const promo7dBanner      = submitted7d.reduce((a, r) => a + (r.offlinePromotion?.banner ?? 0), 0);
+  const promo7dPartnership = submitted7d.reduce((a, r) => a + (r.offlinePromotion?.partnership ?? 0), 0);
+  const promo7dEvent       = submitted7d.reduce((a, r) => a + (r.offlinePromotion?.event ?? 0), 0);
+  const promo7dOther       = submitted7d.reduce((a, r) => a + (r.offlinePromotion?.other ?? 0), 0);
+  const promo7dTotal       = submitted7d.reduce((a, r) => a + getOfflinePromoTotal(r), 0);
+  const hasNew7dTmData     = submitted7d.some((r) => r.expiringTm || r.unregisteredTm);
+
   const openIssues = issues.filter((i) => i.status !== "resolved");
   const criticalIssues = openIssues.filter((i) => i.severity === "critical");
 
@@ -219,6 +234,34 @@ export default function AdminDashboardPage() {
           <KpiCard label="재등록" value={total7dReReg} unit="명" />
           <KpiCard label="컴백회원" value={total7dComeback} unit="명" />
         </div>
+
+        {(tm7dTotal > 0 || hasNew7dTmData) && (
+          <div className="mt-3 pt-3 border-t border-gray-100">
+            <p className="text-xs font-medium text-gray-600 mb-2">TM 방식별 합계 (전 지점)</p>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              <KpiCard label="전화" value={tm7dPhone} unit="건" />
+              <KpiCard label="문자" value={tm7dSms} unit="건" />
+              <KpiCard label="카카오톡" value={tm7dKakao} unit="건" />
+              <KpiCard label="기타" value={tm7dOther} unit="건" />
+              <KpiCard label="TM 총합" value={tm7dTotal} unit="건" />
+            </div>
+          </div>
+        )}
+
+        {promo7dTotal > 0 && (
+          <div className="mt-3 pt-3 border-t border-gray-100">
+            <p className="text-xs font-medium text-gray-600 mb-2">오프라인 홍보 방식별 합계 (전 지점)</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <KpiCard label="전단지" value={promo7dFlyer} unit="개" />
+              <KpiCard label="현수막" value={promo7dPlacard} unit="개" />
+              <KpiCard label="배너" value={promo7dBanner} unit="개" />
+              <KpiCard label="제휴" value={promo7dPartnership} unit="개" />
+              <KpiCard label="외부 행사" value={promo7dEvent} unit="개" />
+              <KpiCard label="기타" value={promo7dOther} unit="개" />
+              <KpiCard label="홍보 총합" value={promo7dTotal} unit="개" />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Issues summary */}

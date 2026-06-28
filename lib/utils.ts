@@ -90,3 +90,43 @@ export function normalizeNumber(value: unknown): number | null {
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
 }
+
+// ─── TM & Promotion aggregation helpers ─────────────────────────────────────
+
+type TmLike = { phone: number; sms: number; kakao: number; other: number };
+type PromoLike = { flyer: number; placard: number; banner: number; partnership: number; event: number; other: number };
+
+export function calcTmTotal(tm: TmLike): number {
+  return tm.phone + tm.sms + tm.kakao + tm.other;
+}
+
+export function calcOfflinePromoTotal(p: PromoLike): number {
+  return p.flyer + p.placard + p.banner + p.partnership + p.event + p.other;
+}
+
+export function getExpiringTmTotal(r: {
+  expiringTm?: TmLike;
+  expiringTmTotal?: number;
+  expiringTmCount?: number | null;
+}): number {
+  if (r.expiringTm) return r.expiringTmTotal ?? calcTmTotal(r.expiringTm);
+  return r.expiringTmCount ?? 0;
+}
+
+export function getUnregisteredTmTotal(r: {
+  unregisteredTm?: TmLike;
+  unregisteredTmTotal?: number;
+  unregisteredTmCount?: number | null;
+}): number {
+  if (r.unregisteredTm) return r.unregisteredTmTotal ?? calcTmTotal(r.unregisteredTm);
+  return r.unregisteredTmCount ?? 0;
+}
+
+export function getOfflinePromoTotal(r: {
+  offlinePromotion?: PromoLike;
+  offlinePromotionTotal?: number;
+  offlinePromotionCount?: number | null;
+}): number {
+  if (r.offlinePromotion) return r.offlinePromotionTotal ?? calcOfflinePromoTotal(r.offlinePromotion);
+  return r.offlinePromotionCount ?? 0;
+}

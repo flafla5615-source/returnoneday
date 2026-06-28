@@ -7,7 +7,7 @@ import { getReportById, getReportComments } from "@/services/reports";
 import { ReportStatusBadge } from "@/components/common/StatusBadge";
 import LoadingState from "@/components/common/LoadingState";
 import EmptyState from "@/components/common/EmptyState";
-import { formatDate, formatDateTime, formatPercent, calcPtConversionRate } from "@/lib/utils";
+import { formatDate, formatDateTime, formatPercent, calcPtConversionRate, getExpiringTmTotal, getUnregisteredTmTotal, getOfflinePromoTotal } from "@/lib/utils";
 import type { DailyReport, ReportComment } from "@/types";
 import { ChevronLeftIcon } from "lucide-react";
 
@@ -95,12 +95,50 @@ export default function ReportDetailPage() {
       {/* TM */}
       <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
         <h2 className="text-sm font-semibold text-gray-800 mb-3">TM·홍보 활동</h2>
-        <Row label="만료·홀드 TM" value={`${report.expiringTmCount ?? "-"}명`} />
-        <Row label="TM 방식" value={report.expiringTmMethods.join(", ") || "-"} />
-        <Row label="미등록 TM" value={`${report.unregisteredTmCount ?? "-"}명`} />
-        <Row label="미등록 TM 방식" value={report.unregisteredTmMethods.join(", ") || "-"} />
-        <Row label="오프라인 홍보" value={`${report.offlinePromotionCount ?? "-"}개`} />
-        <Row label="홍보 방식" value={report.offlinePromotionMethods.join(", ") || "-"} />
+        {report.expiringTm ? (
+          <>
+            <p className="text-xs font-medium text-gray-500 mt-1 mb-1">만료·홀드 TM</p>
+            <div className="grid grid-cols-2 gap-x-4 pl-2 mb-2">
+              <Row label="전화" value={`${report.expiringTm.phone}건`} />
+              <Row label="문자" value={`${report.expiringTm.sms}건`} />
+              <Row label="카카오톡" value={`${report.expiringTm.kakao}건`} />
+              <Row label="기타" value={`${report.expiringTm.other}건`} />
+            </div>
+            <Row label="만료 TM 합계" value={`${getExpiringTmTotal(report)}건`} />
+          </>
+        ) : (
+          <Row label="만료·홀드 TM" value={`${report.expiringTmCount ?? "-"}건`} />
+        )}
+        {report.unregisteredTm ? (
+          <>
+            <p className="text-xs font-medium text-gray-500 mt-3 mb-1">미등록 TM</p>
+            <div className="grid grid-cols-2 gap-x-4 pl-2 mb-2">
+              <Row label="전화" value={`${report.unregisteredTm.phone}건`} />
+              <Row label="문자" value={`${report.unregisteredTm.sms}건`} />
+              <Row label="카카오톡" value={`${report.unregisteredTm.kakao}건`} />
+              <Row label="기타" value={`${report.unregisteredTm.other}건`} />
+            </div>
+            <Row label="미등록 TM 합계" value={`${getUnregisteredTmTotal(report)}건`} />
+          </>
+        ) : (
+          <Row label="미등록 TM" value={`${report.unregisteredTmCount ?? "-"}건`} />
+        )}
+        {report.offlinePromotion ? (
+          <>
+            <p className="text-xs font-medium text-gray-500 mt-3 mb-1">오프라인 홍보</p>
+            <div className="grid grid-cols-2 gap-x-4 pl-2 mb-2">
+              <Row label="전단지" value={`${report.offlinePromotion.flyer}개`} />
+              <Row label="현수막" value={`${report.offlinePromotion.placard}개`} />
+              <Row label="배너" value={`${report.offlinePromotion.banner}개`} />
+              <Row label="제휴" value={`${report.offlinePromotion.partnership}개`} />
+              <Row label="외부 행사" value={`${report.offlinePromotion.event}개`} />
+              <Row label="기타" value={`${report.offlinePromotion.other}개`} />
+            </div>
+            <Row label="홍보 합계" value={`${getOfflinePromoTotal(report)}개`} />
+          </>
+        ) : (
+          <Row label="오프라인 홍보" value={`${report.offlinePromotionCount ?? "-"}개`} />
+        )}
         {report.promotionMemo && <Row label="홍보 메모" value={report.promotionMemo} />}
       </div>
 

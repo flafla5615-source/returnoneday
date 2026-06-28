@@ -24,8 +24,6 @@ import type { Branch, DailyReport, Issue, Campaign } from "@/types";
 import { format, subDays } from "date-fns";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 
-const TM_METHODS = ["전화", "문자", "카카오톡", "기타"];
-const PROMO_METHODS = ["전단지", "현수막", "배너", "제휴", "외부 행사", "기타"];
 
 const CLAIM_CATEGORIES = ["회원 응대", "환불", "시설 불만", "직원 불만", "기타"];
 const STAFF_CATEGORIES = ["결근", "퇴사 예정", "채용 필요", "직원 갈등", "기타"];
@@ -84,14 +82,29 @@ export default function NewReportPage() {
   const [newHappyCalls, setNewHappyCalls] = useState<number | null>(null);
   const [existingHappyCalls, setExistingHappyCalls] = useState<number | null>(null);
 
-  // Step 2 fields
-  const [expiringTmCount, setExpiringTmCount] = useState<number | null>(null);
-  const [expiringTmMethods, setExpiringTmMethods] = useState<string[]>([]);
-  const [unregisteredTmCount, setUnregisteredTmCount] = useState<number | null>(null);
-  const [unregisteredTmMethods, setUnregisteredTmMethods] = useState<string[]>([]);
-  const [offlinePromotionCount, setOfflinePromotionCount] = useState<number | null>(null);
-  const [offlinePromotionMethods, setOfflinePromotionMethods] = useState<string[]>([]);
+  // Step 2 — expiringTm per-channel
+  const [etPhone, setEtPhone] = useState(0);
+  const [etSms, setEtSms] = useState(0);
+  const [etKakao, setEtKakao] = useState(0);
+  const [etOther, setEtOther] = useState(0);
+  // Step 2 — unregisteredTm per-channel
+  const [utPhone, setUtPhone] = useState(0);
+  const [utSms, setUtSms] = useState(0);
+  const [utKakao, setUtKakao] = useState(0);
+  const [utOther, setUtOther] = useState(0);
+  // Step 2 — offlinePromotion per-channel
+  const [opFlyer, setOpFlyer] = useState(0);
+  const [opPlacard, setOpPlacard] = useState(0);
+  const [opBanner, setOpBanner] = useState(0);
+  const [opPartnership, setOpPartnership] = useState(0);
+  const [opEvent, setOpEvent] = useState(0);
+  const [opOther, setOpOther] = useState(0);
   const [promotionMemo, setPromotionMemo] = useState("");
+
+  // Computed totals (derived — not stored as state)
+  const expiringTmTotal = etPhone + etSms + etKakao + etOther;
+  const unregisteredTmTotal = utPhone + utSms + utKakao + utOther;
+  const offlinePromotionTotal = opFlyer + opPlacard + opBanner + opPartnership + opEvent + opOther;
 
   // Step 3 issues
   const [issues, setIssues] = useState<IssueForm[]>([
@@ -111,12 +124,9 @@ export default function NewReportPage() {
     setHappyCalls(null);
     setNewHappyCalls(null);
     setExistingHappyCalls(null);
-    setExpiringTmCount(null);
-    setExpiringTmMethods([]);
-    setUnregisteredTmCount(null);
-    setUnregisteredTmMethods([]);
-    setOfflinePromotionCount(null);
-    setOfflinePromotionMethods([]);
+    setEtPhone(0); setEtSms(0); setEtKakao(0); setEtOther(0);
+    setUtPhone(0); setUtSms(0); setUtKakao(0); setUtOther(0);
+    setOpFlyer(0); setOpPlacard(0); setOpBanner(0); setOpPartnership(0); setOpEvent(0); setOpOther(0);
     setPromotionMemo("");
     setIssues([defaultIssue("claim"), defaultIssue("staff"), defaultIssue("facility")]);
     setCampaignResults({});
@@ -134,12 +144,26 @@ export default function NewReportPage() {
     setHappyCalls(report.happyCalls);
     setNewHappyCalls(report.newHappyCalls);
     setExistingHappyCalls(report.existingHappyCalls);
-    setExpiringTmCount(report.expiringTmCount);
-    setExpiringTmMethods(report.expiringTmMethods);
-    setUnregisteredTmCount(report.unregisteredTmCount);
-    setUnregisteredTmMethods(report.unregisteredTmMethods);
-    setOfflinePromotionCount(report.offlinePromotionCount);
-    setOfflinePromotionMethods(report.offlinePromotionMethods);
+    // New structure
+    if (report.expiringTm) {
+      setEtPhone(report.expiringTm.phone); setEtSms(report.expiringTm.sms);
+      setEtKakao(report.expiringTm.kakao); setEtOther(report.expiringTm.other);
+    } else {
+      setEtPhone(0); setEtSms(0); setEtKakao(0); setEtOther(0);
+    }
+    if (report.unregisteredTm) {
+      setUtPhone(report.unregisteredTm.phone); setUtSms(report.unregisteredTm.sms);
+      setUtKakao(report.unregisteredTm.kakao); setUtOther(report.unregisteredTm.other);
+    } else {
+      setUtPhone(0); setUtSms(0); setUtKakao(0); setUtOther(0);
+    }
+    if (report.offlinePromotion) {
+      setOpFlyer(report.offlinePromotion.flyer); setOpPlacard(report.offlinePromotion.placard);
+      setOpBanner(report.offlinePromotion.banner); setOpPartnership(report.offlinePromotion.partnership);
+      setOpEvent(report.offlinePromotion.event); setOpOther(report.offlinePromotion.other);
+    } else {
+      setOpFlyer(0); setOpPlacard(0); setOpBanner(0); setOpPartnership(0); setOpEvent(0); setOpOther(0);
+    }
     setPromotionMemo(report.promotionMemo ?? "");
   }, []);
 
@@ -241,35 +265,22 @@ export default function NewReportPage() {
     happyCalls,
     newHappyCalls,
     existingHappyCalls,
-    expiringTmCount,
-    expiringTmMethods,
-    unregisteredTmCount,
-    unregisteredTmMethods,
-    offlinePromotionCount,
-    offlinePromotionMethods,
+    expiringTm: { phone: etPhone, sms: etSms, kakao: etKakao, other: etOther },
+    expiringTmTotal: etPhone + etSms + etKakao + etOther,
+    unregisteredTm: { phone: utPhone, sms: utSms, kakao: utKakao, other: utOther },
+    unregisteredTmTotal: utPhone + utSms + utKakao + utOther,
+    offlinePromotion: { flyer: opFlyer, placard: opPlacard, banner: opBanner, partnership: opPartnership, event: opEvent, other: opOther },
+    offlinePromotionTotal: opFlyer + opPlacard + opBanner + opPartnership + opEvent + opOther,
     ...(promotionMemo ? { promotionMemo } : {}),
-  }), [activeMembers, inquiries, ptConsultations, ptRegistrations, reRegistrations, comebackMembers, happyCalls, newHappyCalls, existingHappyCalls, expiringTmCount, expiringTmMethods, unregisteredTmCount, unregisteredTmMethods, offlinePromotionCount, offlinePromotionMethods, promotionMemo]);
+  }), [activeMembers, inquiries, ptConsultations, ptRegistrations, reRegistrations, comebackMembers, happyCalls, newHappyCalls, existingHappyCalls, etPhone, etSms, etKakao, etOther, utPhone, utSms, utKakao, utOther, opFlyer, opPlacard, opBanner, opPartnership, opEvent, opOther, promotionMemo]);
 
   const hasAnyReportInput = useCallback(() => {
-    return [
-      activeMembers,
-      inquiries,
-      ptConsultations,
-      ptRegistrations,
-      reRegistrations,
-      comebackMembers,
-      happyCalls,
-      newHappyCalls,
-      existingHappyCalls,
-      expiringTmCount,
-      unregisteredTmCount,
-      offlinePromotionCount,
-    ].some((value) => value !== null) ||
-      expiringTmMethods.length > 0 ||
-      unregisteredTmMethods.length > 0 ||
-      offlinePromotionMethods.length > 0 ||
+    return [activeMembers, inquiries, ptConsultations, ptRegistrations, reRegistrations, comebackMembers, happyCalls, newHappyCalls, existingHappyCalls]
+      .some((v) => v !== null) ||
+      [etPhone, etSms, etKakao, etOther, utPhone, utSms, utKakao, utOther, opFlyer, opPlacard, opBanner, opPartnership, opEvent, opOther]
+      .some((v) => v > 0) ||
       promotionMemo.trim().length > 0;
-  }, [activeMembers, inquiries, ptConsultations, ptRegistrations, reRegistrations, comebackMembers, happyCalls, newHappyCalls, existingHappyCalls, expiringTmCount, unregisteredTmCount, offlinePromotionCount, expiringTmMethods, unregisteredTmMethods, offlinePromotionMethods, promotionMemo]);
+  }, [activeMembers, inquiries, ptConsultations, ptRegistrations, reRegistrations, comebackMembers, happyCalls, newHappyCalls, existingHappyCalls, etPhone, etSms, etKakao, etOther, utPhone, utSms, utKakao, utOther, opFlyer, opPlacard, opBanner, opPartnership, opEvent, opOther, promotionMemo]);
 
   const autoSave = useCallback(async () => {
     if (!selectedBranchId || !user) return;
@@ -293,7 +304,7 @@ export default function NewReportPage() {
   }, [autoSave]);
 
   // Debounce on field changes
-  useEffect(() => { triggerDebounce(); }, [activeMembers, inquiries, ptConsultations, ptRegistrations, reRegistrations, comebackMembers, happyCalls, newHappyCalls, existingHappyCalls, expiringTmCount, expiringTmMethods, unregisteredTmCount, unregisteredTmMethods, offlinePromotionCount, offlinePromotionMethods, promotionMemo, triggerDebounce]);
+  useEffect(() => { triggerDebounce(); }, [activeMembers, inquiries, ptConsultations, ptRegistrations, reRegistrations, comebackMembers, happyCalls, newHappyCalls, existingHappyCalls, etPhone, etSms, etKakao, etOther, utPhone, utSms, utKakao, utOther, opFlyer, opPlacard, opBanner, opPartnership, opEvent, opOther, promotionMemo, triggerDebounce]);
 
   async function handleSubmit() {
     setSubmitError("");
@@ -373,14 +384,6 @@ export default function NewReportPage() {
     } finally {
       setSaving(false);
     }
-  }
-
-  function toggleMethod(
-    arr: string[],
-    setArr: (v: string[]) => void,
-    val: string
-  ) {
-    setArr(arr.includes(val) ? arr.filter((x) => x !== val) : [...arr, val]);
   }
 
   const convRate = calcPtConversionRate(ptConsultations, ptRegistrations);
@@ -487,88 +490,144 @@ export default function NewReportPage() {
         <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-6">
           <h2 className="font-semibold text-gray-800">2. TM·홍보 활동</h2>
 
-          {/* TM */}
+          {/* Expiring TM */}
           <div className="space-y-3">
-            <h3 className="text-sm font-medium text-gray-700">1. TM 활동</h3>
-            <div className="grid grid-cols-2 gap-4">
-              <NumberInput label="만료·홀드 회원 TM수" value={expiringTmCount} onChange={setExpiringTmCount} unit="명" required />
-              <div>
-                <p className="text-xs font-medium text-gray-700 mb-1">TM 방식</p>
-                <div className="flex flex-wrap gap-2">
-                  {TM_METHODS.map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => toggleMethod(expiringTmMethods, setExpiringTmMethods, m)}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
-                        expiringTmMethods.includes(m)
-                          ? "bg-red-600 text-white"
-                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                      }`}
-                    >
-                      {m}
-                    </button>
-                  ))}
-                </div>
-              </div>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-gray-700">1. 만료·홀드 회원 TM</h3>
+              <button
+                type="button"
+                onClick={() => { setEtPhone(0); setEtSms(0); setEtKakao(0); setEtOther(0); }}
+                className="text-xs text-gray-400 hover:text-gray-600 underline"
+              >
+                초기화
+              </button>
             </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <NumberInput label="미등록 회원 TM수" value={unregisteredTmCount} onChange={setUnregisteredTmCount} unit="명" required />
-              <div>
-                <p className="text-xs font-medium text-gray-700 mb-1">미등록 TM 방식</p>
-                <div className="flex flex-wrap gap-2">
-                  {TM_METHODS.map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => toggleMethod(unregisteredTmMethods, setUnregisteredTmMethods, m)}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
-                        unregisteredTmMethods.includes(m)
-                          ? "bg-red-600 text-white"
-                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                      }`}
-                    >
-                      {m}
-                    </button>
-                  ))}
+            <div className="grid grid-cols-2 gap-3">
+              {([
+                { label: "전화", val: etPhone, set: setEtPhone },
+                { label: "문자", val: etSms, set: setEtSms },
+                { label: "카카오톡", val: etKakao, set: setEtKakao },
+                { label: "기타", val: etOther, set: setEtOther },
+              ] as const).map(({ label, val, set }) => (
+                <div key={label} className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-gray-700">{label}</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      value={val}
+                      onChange={(e) => { const n = parseInt(e.target.value, 10); set(isNaN(n) || n < 0 ? 0 : n); }}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                    />
+                    <span className="text-xs text-gray-500 whitespace-nowrap">건</span>
+                  </div>
                 </div>
-              </div>
+              ))}
             </div>
-
-            <button
-              type="button"
-              onClick={() => { setExpiringTmCount(0); setUnregisteredTmCount(0); setExpiringTmMethods([]); setUnregisteredTmMethods([]); }}
-              className="text-xs text-gray-400 hover:text-gray-600 underline"
-            >
-              오늘 TM 활동 없음
-            </button>
+            <div className="bg-gray-50 rounded-lg px-3 py-2 flex items-center justify-between">
+              <span className="text-xs text-gray-500">만료 TM 총합</span>
+              <span className="text-base font-bold text-gray-800">{expiringTmTotal}건 <span className="text-xs font-normal text-gray-400">자동 계산</span></span>
+            </div>
           </div>
 
-          {/* Promotion */}
+          {/* Unregistered TM */}
           <div className="space-y-3">
-            <h3 className="text-sm font-medium text-gray-700">2. 오프라인 홍보 활동</h3>
-            <div className="grid grid-cols-2 gap-4">
-              <NumberInput label="오프라인 홍보 수량" value={offlinePromotionCount} onChange={setOfflinePromotionCount} unit="개" required />
-              <div>
-                <p className="text-xs font-medium text-gray-700 mb-1">홍보 방식</p>
-                <div className="flex flex-wrap gap-2">
-                  {PROMO_METHODS.map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => toggleMethod(offlinePromotionMethods, setOfflinePromotionMethods, m)}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
-                        offlinePromotionMethods.includes(m)
-                          ? "bg-red-600 text-white"
-                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                      }`}
-                    >
-                      {m}
-                    </button>
-                  ))}
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-gray-700">2. 미등록 회원 TM</h3>
+              <button
+                type="button"
+                onClick={() => { setUtPhone(0); setUtSms(0); setUtKakao(0); setUtOther(0); }}
+                className="text-xs text-gray-400 hover:text-gray-600 underline"
+              >
+                초기화
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {([
+                { label: "전화", val: utPhone, set: setUtPhone },
+                { label: "문자", val: utSms, set: setUtSms },
+                { label: "카카오톡", val: utKakao, set: setUtKakao },
+                { label: "기타", val: utOther, set: setUtOther },
+              ] as const).map(({ label, val, set }) => (
+                <div key={label} className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-gray-700">{label}</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      value={val}
+                      onChange={(e) => { const n = parseInt(e.target.value, 10); set(isNaN(n) || n < 0 ? 0 : n); }}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                    />
+                    <span className="text-xs text-gray-500 whitespace-nowrap">건</span>
+                  </div>
                 </div>
-              </div>
+              ))}
+            </div>
+            <div className="bg-gray-50 rounded-lg px-3 py-2 flex items-center justify-between">
+              <span className="text-xs text-gray-500">미등록 TM 총합</span>
+              <span className="text-base font-bold text-gray-800">{unregisteredTmTotal}건 <span className="text-xs font-normal text-gray-400">자동 계산</span></span>
+            </div>
+          </div>
+
+          <div className="bg-blue-50 rounded-lg px-3 py-2 flex items-center justify-between border border-blue-100">
+            <span className="text-xs text-blue-700 font-medium">전체 TM 총합 (만료+미등록)</span>
+            <span className="text-base font-bold text-blue-800">{expiringTmTotal + unregisteredTmTotal}건</span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setEtPhone(0); setEtSms(0); setEtKakao(0); setEtOther(0);
+              setUtPhone(0); setUtSms(0); setUtKakao(0); setUtOther(0);
+            }}
+            className="text-xs text-gray-400 hover:text-gray-600 underline"
+          >
+            오늘 TM 활동 없음 (전체 초기화)
+          </button>
+
+          {/* Offline Promotion */}
+          <div className="space-y-3 pt-2 border-t border-gray-100">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-gray-700">3. 오프라인 홍보 활동</h3>
+              <button
+                type="button"
+                onClick={() => { setOpFlyer(0); setOpPlacard(0); setOpBanner(0); setOpPartnership(0); setOpEvent(0); setOpOther(0); }}
+                className="text-xs text-gray-400 hover:text-gray-600 underline"
+              >
+                초기화
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {([
+                { label: "전단지", val: opFlyer, set: setOpFlyer },
+                { label: "현수막", val: opPlacard, set: setOpPlacard },
+                { label: "배너", val: opBanner, set: setOpBanner },
+                { label: "제휴", val: opPartnership, set: setOpPartnership },
+                { label: "외부 행사", val: opEvent, set: setOpEvent },
+                { label: "기타", val: opOther, set: setOpOther },
+              ] as const).map(({ label, val, set }) => (
+                <div key={label} className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-gray-700">{label}</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      value={val}
+                      onChange={(e) => { const n = parseInt(e.target.value, 10); set(isNaN(n) || n < 0 ? 0 : n); }}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                    />
+                    <span className="text-xs text-gray-500 whitespace-nowrap">개</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="bg-gray-50 rounded-lg px-3 py-2 flex items-center justify-between">
+              <span className="text-xs text-gray-500">홍보 총합</span>
+              <span className="text-base font-bold text-gray-800">{offlinePromotionTotal}개 <span className="text-xs font-normal text-gray-400">자동 계산</span></span>
             </div>
 
             <div>
@@ -584,7 +643,7 @@ export default function NewReportPage() {
 
             <button
               type="button"
-              onClick={() => { setOfflinePromotionCount(0); setOfflinePromotionMethods([]); }}
+              onClick={() => { setOpFlyer(0); setOpPlacard(0); setOpBanner(0); setOpPartnership(0); setOpEvent(0); setOpOther(0); }}
               className="text-xs text-gray-400 hover:text-gray-600 underline"
             >
               오늘 오프라인 홍보 없음

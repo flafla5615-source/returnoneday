@@ -9,7 +9,7 @@ import KpiCard from "@/components/dashboard/KpiCard";
 import TrendChart from "@/components/dashboard/TrendChart";
 import ConversionFunnel from "@/components/dashboard/ConversionFunnel";
 import LoadingState from "@/components/common/LoadingState";
-import { formatDate, todayYMD, calcPtConversionRate, formatPercent } from "@/lib/utils";
+import { formatDate, todayYMD, calcPtConversionRate, formatPercent, getExpiringTmTotal, getUnregisteredTmTotal, getOfflinePromoTotal } from "@/lib/utils";
 import type { Branch, DailyReport, Issue } from "@/types";
 import { format, subDays, startOfMonth, endOfMonth } from "date-fns";
 
@@ -96,6 +96,23 @@ export default function ManagerDashboardPage() {
 
   const overallConvRate = calcPtConversionRate(totalPtConsult, totalPtReg);
 
+  // TM 방식별 집계 (새 구조 + legacy 호환)
+  const tmPhone   = submitted.reduce((a, r) => a + (r.expiringTm?.phone ?? 0) + (r.unregisteredTm?.phone ?? 0), 0);
+  const tmSms     = submitted.reduce((a, r) => a + (r.expiringTm?.sms ?? 0) + (r.unregisteredTm?.sms ?? 0), 0);
+  const tmKakao   = submitted.reduce((a, r) => a + (r.expiringTm?.kakao ?? 0) + (r.unregisteredTm?.kakao ?? 0), 0);
+  const tmOther   = submitted.reduce((a, r) => a + (r.expiringTm?.other ?? 0) + (r.unregisteredTm?.other ?? 0), 0);
+  const tmTotal   = submitted.reduce((a, r) => a + getExpiringTmTotal(r) + getUnregisteredTmTotal(r), 0);
+
+  // 홍보 방식별 집계
+  const promoFlyer       = submitted.reduce((a, r) => a + (r.offlinePromotion?.flyer ?? 0), 0);
+  const promoPlacard     = submitted.reduce((a, r) => a + (r.offlinePromotion?.placard ?? 0), 0);
+  const promoBanner      = submitted.reduce((a, r) => a + (r.offlinePromotion?.banner ?? 0), 0);
+  const promoPartnership = submitted.reduce((a, r) => a + (r.offlinePromotion?.partnership ?? 0), 0);
+  const promoEvent       = submitted.reduce((a, r) => a + (r.offlinePromotion?.event ?? 0), 0);
+  const promoOther       = submitted.reduce((a, r) => a + (r.offlinePromotion?.other ?? 0), 0);
+  const promoTotal       = submitted.reduce((a, r) => a + getOfflinePromoTotal(r), 0);
+  const hasNewTmData     = submitted.some((r) => r.expiringTm || r.unregisteredTm);
+
   const trendData = submitted.slice().reverse().map((r) => ({
     date: formatDate(r.reportDate).slice(5),
     value: r.activeMembers ?? 0,
@@ -178,6 +195,42 @@ export default function ManagerDashboardPage() {
             />
             <p className="text-xs text-gray-400 mt-2">전체 PT 전환율: <strong>{formatPercent(overallConvRate)}</strong></p>
           </div>
+
+          {/* TM 활동 */}
+          {(tmTotal > 0 || hasNewTmData) && (
+            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+              <p className="text-sm font-semibold text-gray-700 mb-3">TM 활동 방식별 합계</p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+                <KpiCard label="전화" value={tmPhone} unit="건" />
+                <KpiCard label="문자" value={tmSms} unit="건" />
+                <KpiCard label="카카오톡" value={tmKakao} unit="건" />
+                <KpiCard label="기타" value={tmOther} unit="건" />
+              </div>
+              <div className="bg-gray-50 rounded-lg px-3 py-2 flex justify-between items-center">
+                <span className="text-xs text-gray-500">전체 TM (만료+미등록)</span>
+                <span className="text-sm font-bold text-gray-800">{tmTotal}건</span>
+              </div>
+            </div>
+          )}
+
+          {/* 홍보 활동 */}
+          {promoTotal > 0 && (
+            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+              <p className="text-sm font-semibold text-gray-700 mb-3">오프라인 홍보 방식별 합계</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
+                <KpiCard label="전단지" value={promoFlyer} unit="개" />
+                <KpiCard label="현수막" value={promoPlacard} unit="개" />
+                <KpiCard label="배너" value={promoBanner} unit="개" />
+                <KpiCard label="제휴" value={promoPartnership} unit="개" />
+                <KpiCard label="외부 행사" value={promoEvent} unit="개" />
+                <KpiCard label="기타" value={promoOther} unit="개" />
+              </div>
+              <div className="bg-gray-50 rounded-lg px-3 py-2 flex justify-between items-center">
+                <span className="text-xs text-gray-500">홍보 합계</span>
+                <span className="text-sm font-bold text-gray-800">{promoTotal}개</span>
+              </div>
+            </div>
+          )}
 
           {/* Issues summary */}
           <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
