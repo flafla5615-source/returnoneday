@@ -39,23 +39,23 @@ const BRANCHES = [
 ];
 
 const CITYHALL_DATA = [
-  { date: "2026-06-18", activeMembers: 495, inquiries: 8,  ptConsultations: 3, ptRegistrations: 1, reRegistrations: 1, comebackMembers: 0 },
-  { date: "2026-06-19", activeMembers: 498, inquiries: 10, ptConsultations: 4, ptRegistrations: 2, reRegistrations: 2, comebackMembers: 1 },
-  { date: "2026-06-20", activeMembers: 502, inquiries: 12, ptConsultations: 5, ptRegistrations: 2, reRegistrations: 1, comebackMembers: 0 },
-  { date: "2026-06-21", activeMembers: 500, inquiries: 7,  ptConsultations: 2, ptRegistrations: 1, reRegistrations: 0, comebackMembers: 1 },
-  { date: "2026-06-22", activeMembers: 503, inquiries: 15, ptConsultations: 6, ptRegistrations: 3, reRegistrations: 2, comebackMembers: 0 },
-  { date: "2026-06-23", activeMembers: 500, inquiries: 9,  ptConsultations: 4, ptRegistrations: 1, reRegistrations: 1, comebackMembers: 0 },
-  { date: "2026-06-24", activeMembers: 501, inquiries: 12, ptConsultations: 5, ptRegistrations: 2, reRegistrations: 1, comebackMembers: 0 },
+  { date: "2026-06-22", activeMembers: 495, inquiries: 8,  ptConsultations: 3, ptRegistrations: 1, reRegistrations: 1, comebackMembers: 0 },
+  { date: "2026-06-23", activeMembers: 498, inquiries: 10, ptConsultations: 4, ptRegistrations: 2, reRegistrations: 2, comebackMembers: 1 },
+  { date: "2026-06-24", activeMembers: 502, inquiries: 12, ptConsultations: 5, ptRegistrations: 2, reRegistrations: 1, comebackMembers: 0 },
+  { date: "2026-06-25", activeMembers: 500, inquiries: 7,  ptConsultations: 2, ptRegistrations: 1, reRegistrations: 0, comebackMembers: 1 },
+  { date: "2026-06-26", activeMembers: 503, inquiries: 15, ptConsultations: 6, ptRegistrations: 3, reRegistrations: 2, comebackMembers: 0 },
+  { date: "2026-06-27", activeMembers: 500, inquiries: 9,  ptConsultations: 4, ptRegistrations: 1, reRegistrations: 1, comebackMembers: 0 },
+  { date: "2026-06-28", activeMembers: 501, inquiries: 12, ptConsultations: 5, ptRegistrations: 2, reRegistrations: 1, comebackMembers: 0 },
 ];
 
 const NEWJINJU_DATA = [
-  { date: "2026-06-18", activeMembers: 301, inquiries: 4, ptConsultations: 2, ptRegistrations: 1, reRegistrations: 0, comebackMembers: 0 },
-  { date: "2026-06-19", activeMembers: 303, inquiries: 5, ptConsultations: 2, ptRegistrations: 1, reRegistrations: 1, comebackMembers: 0 },
-  { date: "2026-06-20", activeMembers: 305, inquiries: 7, ptConsultations: 3, ptRegistrations: 1, reRegistrations: 1, comebackMembers: 1 },
-  { date: "2026-06-21", activeMembers: 304, inquiries: 3, ptConsultations: 1, ptRegistrations: 0, reRegistrations: 0, comebackMembers: 0 },
-  { date: "2026-06-22", activeMembers: 307, inquiries: 8, ptConsultations: 4, ptRegistrations: 2, reRegistrations: 2, comebackMembers: 0 },
-  { date: "2026-06-23", activeMembers: 309, inquiries: 6, ptConsultations: 3, ptRegistrations: 1, reRegistrations: 1, comebackMembers: 0 },
-  { date: "2026-06-24", activeMembers: 312, inquiries: 9, ptConsultations: 4, ptRegistrations: 2, reRegistrations: 1, comebackMembers: 1 },
+  { date: "2026-06-22", activeMembers: 301, inquiries: 4, ptConsultations: 2, ptRegistrations: 1, reRegistrations: 0, comebackMembers: 0 },
+  { date: "2026-06-23", activeMembers: 303, inquiries: 5, ptConsultations: 2, ptRegistrations: 1, reRegistrations: 1, comebackMembers: 0 },
+  { date: "2026-06-24", activeMembers: 305, inquiries: 7, ptConsultations: 3, ptRegistrations: 1, reRegistrations: 1, comebackMembers: 1 },
+  { date: "2026-06-25", activeMembers: 304, inquiries: 3, ptConsultations: 1, ptRegistrations: 0, reRegistrations: 0, comebackMembers: 0 },
+  { date: "2026-06-26", activeMembers: 307, inquiries: 8, ptConsultations: 4, ptRegistrations: 2, reRegistrations: 2, comebackMembers: 0 },
+  { date: "2026-06-27", activeMembers: 309, inquiries: 6, ptConsultations: 3, ptRegistrations: 1, reRegistrations: 1, comebackMembers: 0 },
+  { date: "2026-06-28", activeMembers: 312, inquiries: 9, ptConsultations: 4, ptRegistrations: 2, reRegistrations: 1, comebackMembers: 1 },
 ];
 
 const ALL_DATA = [
