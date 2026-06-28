@@ -47,7 +47,14 @@ export default function ReportsPage() {
   return (
     <div className="max-w-2xl mx-auto space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-base font-bold text-gray-900">보고 내역</h1>
+        <div>
+          <h1 className="text-base font-bold text-gray-900">보고 내역</h1>
+          {branches.length > 1 && selectedBranchId && (
+            <p className="text-xs text-gray-400 mt-0.5">
+              {branches.find((b) => b.id === selectedBranchId)?.name}
+            </p>
+          )}
+        </div>
         {branches.length > 1 && (
           <select
             value={selectedBranchId}

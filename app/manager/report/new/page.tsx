@@ -67,6 +67,7 @@ export default function NewReportPage() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const searchParams = useSearchParams();
+  const requestedBranchId = searchParams?.get("branchId") ?? "";
   const reportDate = searchParams?.get("date") ?? todayYMD();
   const ymd = format(subDays(new Date(reportDate), 1), "yyyy-MM-dd");
   const reportId = selectedBranchId ? getReportId(selectedBranchId, reportDate) : "";
@@ -189,10 +190,16 @@ export default function NewReportPage() {
     if (!profile) return;
     getBranchesByIds(profile.branchIds).then((bs) => {
       setBranches(bs);
-      if (bs.length > 0) setSelectedBranchId(bs[0].id);
+      if (bs.length > 0) {
+        const storageKey = `returnlife_branch_${profile.uid}`;
+        const saved = localStorage.getItem(storageKey);
+        const byUrl = requestedBranchId ? bs.find((b) => b.id === requestedBranchId) : null;
+        const byStorage = saved ? bs.find((b) => b.id === saved) : null;
+        setSelectedBranchId((byUrl ?? byStorage ?? bs[0]).id);
+      }
       if (bs.length === 0) setLoading(false);
     });
-  }, [profile]);
+  }, [profile, requestedBranchId]);
 
   useEffect(() => {
     if (!selectedBranchId) return;
@@ -334,6 +341,11 @@ export default function NewReportPage() {
     const canEditReport = !existing || existing.status === "draft" || existing.status === "revision_required";
     if (!canEditReport) return;
 
+    if (existing && existing.branchId !== selectedBranchId) {
+      setSubmitError(`지점 불일치 오류: 저장된 보고서(${existing.branchId})와 선택된 지점(${selectedBranchId})이 다릅니다.`);
+      return;
+    }
+
     setSaving(true);
     try {
       const editableStatus = existing?.status === "revision_required" ? "revision_required" : "draft";
@@ -394,6 +406,12 @@ export default function NewReportPage() {
   const isSubmitted = existing?.status === "submitted";
   const isRevisionRequired = existing?.status === "revision_required";
   const canEditReport = !existing || existing.status === "draft" || isRevisionRequired;
+  const isDataMissing = isSubmitted && existing !== null && (
+    existing.activeMembers === null &&
+    existing.inquiries === null &&
+    existing.ptConsultations === null &&
+    existing.ptRegistrations === null
+  );
 
   return (
     <div className="max-w-2xl mx-auto space-y-4">
@@ -408,8 +426,10 @@ export default function NewReportPage() {
             <select
               value={selectedBranchId}
               onChange={(e) => {
+                const newId = e.target.value;
                 setLoading(true);
-                setSelectedBranchId(e.target.value);
+                setSelectedBranchId(newId);
+                router.replace(`/manager/report/new?branchId=${newId}&date=${reportDate}`);
               }}
               className="border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white"
             >
@@ -425,9 +445,14 @@ export default function NewReportPage() {
         </div>
       )}
 
-      {isSubmitted && (
+      {isSubmitted && !isDataMissing && (
         <div className="bg-blue-50 text-blue-700 border border-blue-100 rounded-xl px-4 py-3 text-sm">
           제출 완료된 보고서입니다. 관리자가 수정 요청을 보내기 전까지는 내용을 변경할 수 없습니다.
+        </div>
+      )}
+      {isDataMissing && (
+        <div className="bg-amber-50 text-amber-700 border border-amber-200 rounded-xl px-4 py-3 text-sm">
+          제출 데이터 확인 필요: 제출 기록은 있으나 주요 데이터가 비어 있습니다. 관리자에게 문의하세요.
         </div>
       )}
 

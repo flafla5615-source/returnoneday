@@ -152,6 +152,12 @@ export default function ManagerHomePage() {
             onChange={(e) => {
               const newId = e.target.value;
               setLoading(true);
+              setTodayReport(undefined);
+              setYesterdayReport(null);
+              setRecentReports([]);
+              setCampaigns([]);
+              setIssues([]);
+              setLoadError(null);
               setSelectedBranchId(newId);
               if (profile) localStorage.setItem(`returnlife_branch_${profile.uid}`, newId);
             }}
@@ -186,7 +192,7 @@ export default function ManagerHomePage() {
         </div>
         {(!reportStatus || reportStatus === "draft" || reportStatus === "revision_required") && (
           <Link
-            href="/manager/report/new"
+            href={`/manager/report/new?branchId=${selectedBranchId}&date=${today}`}
             className="mt-3 flex items-center justify-center gap-2 w-full py-2.5 bg-red-600 text-white rounded-lg text-sm font-semibold hover:bg-red-700 transition-colors"
           >
             <PlusCircleIcon className="w-4 h-4" />

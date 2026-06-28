@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import { useAuth } from "@/contexts/AuthContext";
 import { getReportById, getReportComments } from "@/services/reports";
+import { getBranchesByIds } from "@/services/branches";
 import { ReportStatusBadge } from "@/components/common/StatusBadge";
 import LoadingState from "@/components/common/LoadingState";
 import EmptyState from "@/components/common/EmptyState";
@@ -22,8 +24,10 @@ function Row({ label, value }: { label: string; value: string | number }) {
 
 export default function ReportDetailPage() {
   const { reportId } = useParams<{ reportId: string }>();
+  const { profile } = useAuth();
   const [report, setReport] = useState<DailyReport | null | undefined>(undefined);
   const [comments, setComments] = useState<ReportComment[]>([]);
+  const [branchName, setBranchName] = useState("");
   const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
@@ -33,9 +37,19 @@ export default function ReportDetailPage() {
     Promise.all([getReportById(reportId), getReportComments(reportId)])
       .then(([r, cs]) => {
         if (cancelled) return;
+        if (r && profile && !profile.branchIds.includes(r.branchId)) {
+          setLoadError("이 보고서에 접근할 권한이 없습니다.");
+          setReport(null);
+          return;
+        }
         setLoadError("");
         setReport(r);
         setComments(cs);
+        if (r) {
+          getBranchesByIds([r.branchId]).then((bs) => {
+            if (!cancelled) setBranchName(bs[0]?.name ?? "");
+          });
+        }
       })
       .catch((error) => {
         if (cancelled) return;
@@ -66,6 +80,7 @@ export default function ReportDetailPage() {
         </Link>
         <div className="flex-1">
           <h1 className="text-base font-bold text-gray-900">{formatDate(report.reportDate)} 보고서</h1>
+          {branchName && <p className="text-xs text-gray-400">{branchName}</p>}
         </div>
         <ReportStatusBadge status={report.status} />
       </div>
@@ -159,7 +174,7 @@ export default function ReportDetailPage() {
             </div>
           )}
           <Link
-            href={`/manager/report/new?date=${report.reportDate}`}
+            href={`/manager/report/new?branchId=${report.branchId}&date=${report.reportDate}`}
             className="mt-2 inline-block px-4 py-2 bg-orange-600 text-white text-sm rounded-lg hover:bg-orange-700"
           >
             수정하기
