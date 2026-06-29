@@ -216,6 +216,7 @@ export default function AdminExportPage() {
       const campaignMap = Object.fromEntries(campaigns.map((campaign) => [campaign.id, campaign]));
 
       const filtered = reports.filter((report) => {
+        if (report.isTestData === true) return false;
         const branch = branchMap[report.branchId];
         if (selectedBranch && report.branchId !== selectedBranch) return false;
         if (selectedBrand && branch?.brand !== selectedBrand) return false;

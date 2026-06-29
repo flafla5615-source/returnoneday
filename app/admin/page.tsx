@@ -86,7 +86,7 @@ export default function AdminDashboardPage() {
     );
   }
 
-  const submitted = reports.filter((r) => r.status === "submitted" || r.status === "locked");
+  const submitted = reports.filter((r) => (r.status === "submitted" || r.status === "locked") && r.isTestData !== true);
   const revisionNeeded = reports.filter((r) => r.status === "revision_required");
   const submitMap = new Set(submitted.map((r) => r.branchId));
   const notSubmitted = branches.filter((b) => !submitMap.has(b.id));
@@ -108,7 +108,7 @@ export default function AdminDashboardPage() {
     if (!seen7d.has(k)) seen7d.set(k, r);
   }
   const submitted7d = [...seen7d.values()].filter(
-    (r) => r.status === "submitted" || r.status === "locked"
+    (r) => (r.status === "submitted" || r.status === "locked") && r.isTestData !== true
   );
   const total7dPtConsult = submitted7d.reduce((acc, r) => acc + (r.ptConsultations ?? 0), 0);
   const total7dPtReg = submitted7d.reduce((acc, r) => acc + (r.ptRegistrations ?? 0), 0);

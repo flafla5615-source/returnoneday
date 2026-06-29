@@ -364,16 +364,6 @@ export default function AdminReportsPage() {
                         {report.isTestData && (
                           <span className="inline-block text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-600 rounded font-medium w-fit">테스트</span>
                         )}
-                        {report.status === "submitted" &&
-                          report.activeMembers === null &&
-                          report.inquiries === null &&
-                          report.ptConsultations === null &&
-                          report.ptRegistrations === null &&
-                          report.reRegistrations === null &&
-                          report.comebackMembers === null &&
-                          report.happyCalls === null && (
-                          <span className="inline-block text-[10px] px-1.5 py-0.5 bg-red-100 text-red-600 rounded font-medium w-fit">비정상 제출</span>
-                        )}
                       </div>
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap">{branch?.brand ?? "-"}</td>
