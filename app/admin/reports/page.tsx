@@ -50,6 +50,8 @@ export default function AdminReportsPage() {
   const [filterFrom, setFilterFrom] = useState(format(subDays(new Date(), 6), "yyyy-MM-dd"));
   const [filterTo, setFilterTo] = useState(todayYMD());
 
+  const [showTestData, setShowTestData] = useState(false);
+
   const [actionReport, setActionReport] = useState<DailyReport | null>(null);
   const [actionType, setActionType] = useState<"revision" | "lock" | "unlock" | null>(null);
   const [comment, setComment] = useState("");
@@ -137,6 +139,7 @@ export default function AdminReportsPage() {
   const filtered = useMemo(
     () =>
       reports.filter((report) => {
+        if (!showTestData && report.isTestData === true) return false;
         const branch = branchMap[report.branchId];
         if (filterBrand && branch?.brand !== filterBrand) return false;
         if (filterRegion && branch?.region !== filterRegion) return false;
@@ -144,7 +147,7 @@ export default function AdminReportsPage() {
         if (filterStatus && report.status !== filterStatus) return false;
         return true;
       }),
-    [reports, branchMap, filterBrand, filterRegion, filterBranch, filterStatus]
+    [reports, branchMap, filterBrand, filterRegion, filterBranch, filterStatus, showTestData]
   );
 
   const summary = useMemo(() => {
@@ -302,13 +305,26 @@ export default function AdminReportsPage() {
             <SummaryPill label="유효회원" value={`${summary.totalActiveMembers.toLocaleString()}명`} />
             <SummaryPill label="PT 전환율" value={formatPercent(summary.ptConversionRate)} />
           </div>
-          <button
-            type="button"
-            onClick={resetFilters}
-            className="px-3 py-2 text-xs border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50"
-          >
-            필터 초기화
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setShowTestData((v) => !v)}
+              className={`px-3 py-2 text-xs border rounded-lg transition-colors ${
+                showTestData
+                  ? "border-amber-400 bg-amber-50 text-amber-700"
+                  : "border-gray-300 text-gray-400 hover:bg-gray-50"
+              }`}
+            >
+              {showTestData ? "테스트 데이터 숨기기" : "테스트 데이터 포함"}
+            </button>
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="px-3 py-2 text-xs border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50"
+            >
+              필터 초기화
+            </button>
+          </div>
         </div>
       </div>
 
@@ -341,9 +357,24 @@ export default function AdminReportsPage() {
                 return (
                   <tr key={report.id} className="hover:bg-gray-50">
                     <td className="px-3 py-3 whitespace-nowrap">
-                      <Link href={`/admin/reports/${report.id}`} className="text-blue-600 hover:underline">
-                        {formatDate(report.reportDate)}
-                      </Link>
+                      <div className="flex flex-col gap-0.5">
+                        <Link href={`/admin/reports/${report.id}`} className="text-blue-600 hover:underline">
+                          {formatDate(report.reportDate)}
+                        </Link>
+                        {report.isTestData && (
+                          <span className="inline-block text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-600 rounded font-medium w-fit">테스트</span>
+                        )}
+                        {report.status === "submitted" &&
+                          report.activeMembers === null &&
+                          report.inquiries === null &&
+                          report.ptConsultations === null &&
+                          report.ptRegistrations === null &&
+                          report.reRegistrations === null &&
+                          report.comebackMembers === null &&
+                          report.happyCalls === null && (
+                          <span className="inline-block text-[10px] px-1.5 py-0.5 bg-red-100 text-red-600 rounded font-medium w-fit">비정상 제출</span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap">{branch?.brand ?? "-"}</td>
                     <td className="px-3 py-3 whitespace-nowrap">{branch?.region ?? "-"}</td>

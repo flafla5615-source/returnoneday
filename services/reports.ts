@@ -97,6 +97,8 @@ export async function upsertReport(
       offlinePromotion: { flyer: 0, placard: 0, banner: 0, partnership: 0, event: 0, other: 0 },
       offlinePromotionTotal: 0,
       ...cleanData,
+      isTestData: false,
+      source: "manager-input",
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
       ...(status === "submitted" ? { submittedAt: serverTimestamp() } : {}),

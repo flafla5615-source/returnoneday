@@ -87,6 +87,10 @@ export interface DailyReport {
   offlinePromotionCount?: number | null;
   offlinePromotionMethods?: string[];
 
+  // Data provenance
+  isTestData?: boolean;
+  source?: "manager-input" | "dashboard-seed" | string;
+
   createdAt: Timestamp;
   updatedAt: Timestamp;
   submittedAt?: Timestamp;

@@ -187,6 +187,8 @@ async function main() {
         unregisteredTmMethods: [],
         offlinePromotionCount: null,
         offlinePromotionMethods: [],
+        isTestData: true,
+        source: "dashboard-seed",
         createdAt: ts,
         updatedAt: ts,
         submittedAt: ts,
