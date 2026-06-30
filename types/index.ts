@@ -178,3 +178,22 @@ export interface DateRange {
   from: Date;
   to: Date;
 }
+
+// ─── Manager Invite ──────────────────────────────────────────────────────────
+
+export type ManagerInviteStatus =
+  | "email_required"
+  | "account_pending"
+  | "account_created"
+  | "password_pending"
+  | "active"
+  | "suspended";
+
+export interface ManagerInvite {
+  name: string;
+  email: string;
+  branchIds: string[];
+  status: ManagerInviteStatus;
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+}
