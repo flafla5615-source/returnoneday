@@ -11,15 +11,20 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+function isNavActive(pathname: string, href: string, exact?: boolean): boolean {
+  if (exact) return pathname === href;
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
 const managerMobileNav = [
-  { label: "홈", href: "/manager", icon: HomeIcon },
+  { label: "홈", href: "/manager", icon: HomeIcon, exact: true },
   { label: "보고작성", href: "/manager/report/new", icon: ClipboardListIcon },
   { label: "대시보드", href: "/manager/dashboard", icon: BarChart2Icon },
   { label: "이슈", href: "/manager/issues", icon: AlertCircleIcon },
 ];
 
 const adminMobileNav = [
-  { label: "현황", href: "/admin", icon: HomeIcon },
+  { label: "현황", href: "/admin", icon: HomeIcon, exact: true },
   { label: "보고", href: "/admin/reports", icon: ClipboardListIcon },
   { label: "이슈", href: "/admin/issues", icon: AlertCircleIcon },
   { label: "사용자", href: "/admin/users", icon: UsersIcon },
@@ -33,7 +38,7 @@ export default function MobileNavigation({ role }: { role: "branch_manager" | "a
     <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-[#1e3a5f] border-t border-white/10 z-40">
       <div className="flex">
         {nav.map((item) => {
-          const active = pathname === item.href || pathname.startsWith(item.href + "/");
+          const active = isNavActive(pathname, item.href, item.exact);
           const Icon = item.icon;
           return (
             <Link

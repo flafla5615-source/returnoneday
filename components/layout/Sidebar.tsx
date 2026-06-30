@@ -24,10 +24,16 @@ interface NavItem {
   label: string;
   href: string;
   icon: React.ReactNode;
+  exact?: boolean;
+}
+
+function isNavActive(pathname: string, href: string, exact?: boolean): boolean {
+  if (exact) return pathname === href;
+  return pathname === href || pathname.startsWith(`${href}/`);
 }
 
 const managerNav: NavItem[] = [
-  { label: "홈", href: "/manager", icon: <HomeIcon className="w-4 h-4" /> },
+  { label: "홈", href: "/manager", icon: <HomeIcon className="w-4 h-4" />, exact: true },
   { label: "일일보고 작성", href: "/manager/report/new", icon: <ClipboardListIcon className="w-4 h-4" /> },
   { label: "보고 내역", href: "/manager/reports", icon: <FileTextIcon className="w-4 h-4" /> },
   { label: "대시보드", href: "/manager/dashboard", icon: <BarChart2Icon className="w-4 h-4" /> },
@@ -36,12 +42,11 @@ const managerNav: NavItem[] = [
 ];
 
 const adminNav: NavItem[] = [
-  { label: "오늘 현황", href: "/admin", icon: <HomeIcon className="w-4 h-4" /> },
-  { label: "지점 내역", href: "/admin/reports", icon: <FileTextIcon className="w-4 h-4" /> },
+  { label: "오늘 현황", href: "/admin", icon: <HomeIcon className="w-4 h-4" />, exact: true },
+  { label: "지점 내역", href: "/admin/branches", icon: <BuildingIcon className="w-4 h-4" /> },
   { label: "보고 관리", href: "/admin/reports", icon: <ClipboardListIcon className="w-4 h-4" /> },
   { label: "운영 이슈", href: "/admin/issues", icon: <AlertCircleIcon className="w-4 h-4" /> },
   { label: "캠페인 관리", href: "/admin/campaigns", icon: <MegaphoneIcon className="w-4 h-4" /> },
-  { label: "지점 관리", href: "/admin/branches", icon: <BuildingIcon className="w-4 h-4" /> },
   { label: "사용자 관리", href: "/admin/users", icon: <UsersIcon className="w-4 h-4" /> },
   { label: "데이터 내보내기", href: "/admin/export", icon: <DownloadIcon className="w-4 h-4" /> },
   { label: "설정", href: "/admin/settings", icon: <SettingsIcon className="w-4 h-4" /> },
@@ -81,7 +86,7 @@ export default function Sidebar({ role, onClose }: Props) {
       {/* Nav */}
       <nav className="flex-1 py-4 overflow-y-auto">
         {nav.map((item) => {
-          const active = pathname === item.href || pathname.startsWith(item.href + "/");
+          const active = isNavActive(pathname, item.href, item.exact);
           return (
             <Link
               key={item.href + item.label}
