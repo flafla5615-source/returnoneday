@@ -190,6 +190,24 @@ export interface Trainer {
   updatedAt: Timestamp;
 }
 
+// ─── Trainer Daily Report ────────────────────────────────────────────────────
+
+export interface TrainerDailyReport {
+  id: string;
+  branchId: string;
+  reportDate: string; // YYYY-MM-DD
+  trainerId: string;
+  trainerName: string;
+  walkInSales: number;
+  personalSales: number;
+  totalSales: number;
+  classCount: number;
+  writerUid: string;
+  isTestData?: boolean;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
 // ─── Manager Invite ──────────────────────────────────────────────────────────
 
 export type ManagerInviteStatus =

@@ -236,6 +236,19 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // ─── trainerDailyReports ─────────────────────────────────────────────────
+    // Doc ID: {branchId}_{reportDate}_{trainerId}
+    // Admin: full access. Branch manager: read own branch, write own branch.
+    match /trainerDailyReports/{reportId} {
+      allow read: if isAdmin() ||
+        (isActiveManager() && resource.data.branchId in getUserData().branchIds);
+      allow create, update: if isAdmin() ||
+        (isActiveManager()
+          && request.resource.data.branchId in getUserData().branchIds
+          && request.resource.data.writerUid == uid());
+      allow delete: if isAdmin();
+    }
+
     // ─── managerInvites ───────────────────────────────────────────────────────
     match /managerInvites/{docId} {
       allow read, write: if isAdmin();
