@@ -90,15 +90,17 @@ export async function getTrainerDailyReportsByBranchAndDate(
   branchId: string,
   reportDate: string
 ): Promise<TrainerDailyReport[]> {
+  // Equality-only filters use single-field auto-indexes — no composite index needed.
   const snap = await getDocs(
     query(
       collection(db, "trainerDailyReports"),
       where("branchId", "==", branchId),
-      where("reportDate", "==", reportDate),
-      orderBy("trainerName", "asc")
+      where("reportDate", "==", reportDate)
     )
   );
-  return snap.docs.map((d) => ({ ...d.data() } as TrainerDailyReport));
+  return snap.docs
+    .map((d) => ({ ...d.data() } as TrainerDailyReport))
+    .sort((a, b) => a.trainerName.localeCompare(b.trainerName, "ko"));
 }
 
 export async function getTrainerDailyReportsByPeriod(
@@ -112,11 +114,16 @@ export async function getTrainerDailyReportsByPeriod(
       where("branchId", "==", branchId),
       where("reportDate", ">=", fromDate),
       where("reportDate", "<=", toDate),
-      orderBy("reportDate", "asc"),
-      orderBy("trainerName", "asc")
+      orderBy("reportDate", "asc")
     )
   );
-  return snap.docs.map((d) => ({ ...d.data() } as TrainerDailyReport));
+  return snap.docs
+    .map((d) => ({ ...d.data() } as TrainerDailyReport))
+    .sort((a, b) =>
+      a.reportDate !== b.reportDate
+        ? a.reportDate.localeCompare(b.reportDate)
+        : a.trainerName.localeCompare(b.trainerName, "ko")
+    );
 }
 
 export async function getTrainerDailyReportsByTrainer(

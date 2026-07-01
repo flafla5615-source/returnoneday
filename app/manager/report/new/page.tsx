@@ -8,6 +8,11 @@ import { getBranchesByIds } from "@/services/branches";
 import { getReport, reopenAbnormalSubmittedReport, upsertReport } from "@/services/reports";
 import { getIssuesByReport, upsertIssues } from "@/services/issues";
 import { getActiveCampaigns, upsertCampaignResult, getCampaignResultByReport } from "@/services/campaigns";
+import { getAllTrainers } from "@/services/trainers";
+import {
+  upsertTrainerDailyReport,
+  getTrainerDailyReportsByBranchAndDate,
+} from "@/services/trainerDailyReports";
 import ReportStepper from "@/components/reports/ReportStepper";
 import AutosaveIndicator from "@/components/reports/AutosaveIndicator";
 import NumberInput from "@/components/reports/NumberInput";
@@ -21,10 +26,18 @@ import {
   getReportId,
   isAbnormalSubmittedReport,
 } from "@/lib/utils";
-import type { Branch, DailyReport, Issue, Campaign } from "@/types";
+import type { Branch, DailyReport, Issue, Campaign, Trainer } from "@/types";
 import { format, subDays } from "date-fns";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 
+
+type TrainerPerfState = {
+  trainerId: string;
+  trainerName: string;
+  walkInSales: number;
+  personalSales: number;
+  classCount: number;
+};
 
 const CLAIM_CATEGORIES = ["회원 응대", "환불", "시설 불만", "직원 불만", "기타"];
 const STAFF_CATEGORIES = ["결근", "퇴사 예정", "채용 필요", "직원 갈등", "기타"];
@@ -65,6 +78,8 @@ export default function NewReportPage() {
   const [submitOpen, setSubmitOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitError, setSubmitError] = useState("");
+  const [branchTrainers, setBranchTrainers] = useState<Trainer[]>([]);
+  const [trainerPerfs, setTrainerPerfs] = useState<TrainerPerfState[]>([]);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const searchParams = useSearchParams();
@@ -169,6 +184,16 @@ export default function NewReportPage() {
     setPromotionMemo(report.promotionMemo ?? "");
   }, []);
 
+  function updateTrainerPerf(
+    trainerId: string,
+    field: keyof Omit<TrainerPerfState, "trainerId" | "trainerName">,
+    value: number
+  ) {
+    setTrainerPerfs((prev) =>
+      prev.map((p) => (p.trainerId === trainerId ? { ...p, [field]: value } : p))
+    );
+  }
+
   const applyIssues = useCallback((reportIssues: Issue[]) => {
     const issueMap = new Map(reportIssues.map((issue) => [issue.type, issue]));
     setIssues((["claim", "staff", "facility"] as Issue["type"][]).map((type) => {
@@ -209,10 +234,12 @@ export default function NewReportPage() {
 
     async function loadReportContext() {
       try {
-        const [ex, yd, cps] = await Promise.all([
+        const [ex, yd, cps, allTrainers, existingTrainerReports] = await Promise.all([
           getReport(selectedBranchId, reportDate),
           getReport(selectedBranchId, ymd),
           getActiveCampaigns(selectedBranchId),
+          getAllTrainers(),
+          getTrainerDailyReportsByBranchAndDate(selectedBranchId, reportDate),
         ]);
         let reportIssues: Issue[] = [];
         if (ex) {
@@ -223,6 +250,26 @@ export default function NewReportPage() {
           }
         }
         if (cancelled) return;
+
+        // Trainer setup
+        const filteredTrainers = allTrainers.filter(
+          (t) => t.active && t.branchIds.includes(selectedBranchId)
+        );
+        const existingPerfMap = new Map(existingTrainerReports.map((r) => [r.trainerId, r]));
+        setBranchTrainers(filteredTrainers);
+        setTrainerPerfs(
+          filteredTrainers.map((t) => {
+            const ep = existingPerfMap.get(t.id);
+            return {
+              trainerId: t.id,
+              trainerName: t.name,
+              walkInSales: ep?.walkInSales ?? 0,
+              personalSales: ep?.personalSales ?? 0,
+              classCount: ep?.classCount ?? 0,
+            };
+          })
+        );
+
         setYesterday(yd);
         setCampaigns(cps);
         if (cps.length === 0) setCampaignResults({});
@@ -372,6 +419,30 @@ export default function NewReportPage() {
         if (Object.keys(metrics).length > 0) {
           await upsertCampaignResult(c.id, rid, selectedBranchId, reportDate, metrics);
         }
+      }
+
+      // Save trainer daily reports
+      const trainerErrors: string[] = [];
+      for (const perf of trainerPerfs) {
+        try {
+          await upsertTrainerDailyReport({
+            branchId: selectedBranchId,
+            reportDate,
+            trainerId: perf.trainerId,
+            trainerName: perf.trainerName,
+            walkInSales: perf.walkInSales,
+            personalSales: perf.personalSales,
+            classCount: perf.classCount,
+            writerUid: user.uid,
+          });
+        } catch (tErr) {
+          console.error(`trainer report save failed: ${perf.trainerName}`, tErr);
+          trainerErrors.push(perf.trainerName);
+        }
+      }
+      if (trainerErrors.length > 0) {
+        setSubmitError(`트레이너 실적 저장 실패: ${trainerErrors.join(", ")} — 다시 시도해주세요.`);
+        return;
       }
 
       // Final: set status to submitted
@@ -857,6 +928,116 @@ export default function NewReportPage() {
         </div>
       )}
 
+      {/* Step 5: Trainer performance */}
+      {step === 5 && (
+        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-5">
+          <h2 className="font-semibold text-gray-800">5. 트레이너 실적</h2>
+
+          {branchTrainers.length === 0 ? (
+            <div className="text-center py-10 space-y-2">
+              <p className="text-sm text-gray-500">등록된 트레이너가 없습니다.</p>
+              <p className="text-xs text-gray-400">관리자에게 트레이너 등록을 요청하세요.</p>
+            </div>
+          ) : (
+            <>
+              {trainerPerfs.map((perf) => {
+                const totalSales = perf.walkInSales + perf.personalSales;
+                return (
+                  <div
+                    key={perf.trainerId}
+                    className="border border-gray-100 rounded-xl p-4 space-y-3"
+                  >
+                    <p className="text-sm font-semibold text-gray-800">{perf.trainerName}</p>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      {(
+                        [
+                          { label: "워크인 매출", field: "walkInSales" as const, val: perf.walkInSales },
+                          { label: "개인역량 매출", field: "personalSales" as const, val: perf.personalSales },
+                        ] as const
+                      ).map(({ label, field, val }) => (
+                        <div key={field} className="flex flex-col gap-1">
+                          <label className="text-xs font-medium text-gray-700">{label}</label>
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              value={val > 0 ? val.toLocaleString("ko-KR") : ""}
+                              placeholder="0"
+                              disabled={!canEditReport}
+                              onChange={(e) => {
+                                const n = parseInt(
+                                  e.target.value.replace(/[^0-9]/g, ""),
+                                  10
+                                );
+                                updateTrainerPerf(
+                                  perf.trainerId,
+                                  field,
+                                  isNaN(n) || n < 0 ? 0 : n
+                                );
+                              }}
+                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-50 disabled:text-gray-400"
+                            />
+                            <span className="text-xs text-gray-500 whitespace-nowrap">원</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs font-medium text-gray-700">수업 수</label>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            min={0}
+                            value={perf.classCount === 0 ? "" : perf.classCount}
+                            placeholder="0"
+                            disabled={!canEditReport}
+                            onChange={(e) => {
+                              const n = parseInt(e.target.value, 10);
+                              updateTrainerPerf(
+                                perf.trainerId,
+                                "classCount",
+                                isNaN(n) || n < 0 ? 0 : Math.floor(n)
+                              );
+                            }}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-50 disabled:text-gray-400"
+                          />
+                          <span className="text-xs text-gray-500 whitespace-nowrap">회</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-gray-50 rounded-lg px-3 py-2 flex flex-col justify-center">
+                        <p className="text-xs text-gray-500">총매출 (자동)</p>
+                        <p className="text-sm font-bold text-gray-800">
+                          {totalSales.toLocaleString("ko-KR")}원
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 flex items-center justify-between">
+                <span className="text-xs text-blue-700 font-medium">트레이너 합계</span>
+                <div className="text-right">
+                  <p className="text-sm font-bold text-blue-800">
+                    {trainerPerfs
+                      .reduce((s, p) => s + p.walkInSales + p.personalSales, 0)
+                      .toLocaleString("ko-KR")}원
+                  </p>
+                  <p className="text-xs text-blue-500">
+                    수업 {trainerPerfs.reduce((s, p) => s + p.classCount, 0)}회
+                  </p>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Bottom navigation */}
       <div className="bg-white rounded-xl border border-gray-200 p-3 shadow-sm">
         <div className="flex items-center justify-between gap-2">
@@ -878,7 +1059,7 @@ export default function NewReportPage() {
             >
               임시 저장
             </button>
-            {step < 4 ? (
+            {step < 5 ? (
               <button
                 onClick={() => { autoSave(); setStep(step + 1); }}
                 className="flex items-center gap-1 px-4 py-2 text-sm bg-[#1e3a5f] text-white rounded-lg hover:bg-[#16304f]"

@@ -6,6 +6,7 @@ const STEPS = [
   { label: "TM·홍보 활동", num: 2 },
   { label: "운영 이슈", num: 3 },
   { label: "캠페인 실적", num: 4 },
+  { label: "트레이너 실적", num: 5 },
 ];
 
 interface Props {

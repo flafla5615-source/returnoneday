@@ -98,6 +98,22 @@
         { "fieldPath": "reportId", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "trainerDailyReports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "branchId", "order": "ASCENDING" },
+        { "fieldPath": "reportDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "trainerDailyReports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "trainerId", "order": "ASCENDING" },
+        { "fieldPath": "reportDate", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
