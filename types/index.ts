@@ -179,6 +179,17 @@ export interface DateRange {
   to: Date;
 }
 
+// ─── Trainer ─────────────────────────────────────────────────────────────────
+
+export interface Trainer {
+  id: string;
+  name: string;
+  branchIds: string[];
+  active: boolean;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
 // ─── Manager Invite ──────────────────────────────────────────────────────────
 
 export type ManagerInviteStatus =

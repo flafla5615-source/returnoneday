@@ -230,6 +230,12 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    // ─── trainers ─────────────────────────────────────────────────────────────
+    match /trainers/{trainerId} {
+      allow read: if isActive();
+      allow write: if isAdmin();
+    }
+
     // ─── managerInvites ───────────────────────────────────────────────────────
     match /managerInvites/{docId} {
       allow read, write: if isAdmin();

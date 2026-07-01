@@ -14,6 +14,7 @@ import {
   DownloadIcon,
   FileTextIcon,
   LogOutIcon,
+  DumbbellIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -48,6 +49,7 @@ const adminNav: NavItem[] = [
   { label: "운영 이슈", href: "/admin/issues", icon: <AlertCircleIcon className="w-4 h-4" /> },
   { label: "캠페인 관리", href: "/admin/campaigns", icon: <MegaphoneIcon className="w-4 h-4" /> },
   { label: "사용자 관리", href: "/admin/users", icon: <UsersIcon className="w-4 h-4" /> },
+  { label: "트레이너 관리", href: "/admin/trainers/manage", icon: <DumbbellIcon className="w-4 h-4" /> },
   { label: "데이터 내보내기", href: "/admin/export", icon: <DownloadIcon className="w-4 h-4" /> },
   { label: "설정", href: "/admin/settings", icon: <SettingsIcon className="w-4 h-4" /> },
 ];
