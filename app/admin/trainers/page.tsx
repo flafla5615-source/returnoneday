@@ -9,9 +9,17 @@ import { getAllReports } from "@/services/reports";
 import LoadingState from "@/components/common/LoadingState";
 import { cn, todayYMD, formatDate } from "@/lib/utils";
 import type { Branch, Trainer, TrainerDailyReport } from "@/types";
-import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, SearchIcon } from "lucide-react";
 
 type Preset = "today" | "7days" | "thisMonth" | "custom";
+
+type SortKey =
+  | "walkInSales"
+  | "personalSales"
+  | "totalSales"
+  | "personalRate"
+  | "classCount"
+  | "salesPerClass";
 
 type TrainerAgg = {
   trainerId: string;
@@ -21,6 +29,8 @@ type TrainerAgg = {
   personalSales: number;
   totalSales: number;
   classCount: number;
+  personalRate: number | null;
+  salesPerClass: number | null;
 };
 
 type BranchAgg = {
@@ -32,27 +42,51 @@ type BranchAgg = {
   trainerCount: number;
 };
 
+const SORT_LABELS: Record<SortKey, string> = {
+  walkInSales: "워크인 매출",
+  personalSales: "개인역량 매출",
+  totalSales: "총매출",
+  personalRate: "개인역량 비율",
+  classCount: "수업 수",
+  salesPerClass: "수업당 매출",
+};
+
 function won(n: number): string {
   return `${n.toLocaleString("ko-KR")}원`;
 }
 
-function pct(part: number, whole: number): string {
-  if (whole === 0) return "-";
-  return `${Math.round((part / whole) * 100)}%`;
+function personalSalesRate(personal: number, total: number): number | null {
+  return total === 0 ? null : (personal / total) * 100;
 }
 
-function perClass(total: number, classes: number): string {
-  if (classes === 0) return "-";
-  return won(Math.round(total / classes));
+function salesPerClassOf(total: number, classes: number): number | null {
+  return classes === 0 ? null : total / classes;
+}
+
+function fmtRate(rate: number | null): string {
+  return rate === null ? "-" : `${Math.round(rate)}%`;
+}
+
+function fmtPerClass(v: number | null): string {
+  return v === null ? "-" : won(Math.round(v));
+}
+
+function reportKey(r: { branchId: string; reportDate: string }): string {
+  return `${r.branchId}_${r.reportDate}`;
 }
 
 export default function TrainerDashboardPage() {
   const today = todayYMD();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [trainers, setTrainers] = useState<Trainer[]>([]);
-  const [reports, setReports] = useState<TrainerDailyReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [periodLoading, setPeriodLoading] = useState(false);
+
+  // Raw period data (test data already removed) + validity info for draft filtering
+  const [rawReports, setRawReports] = useState<TrainerDailyReport[]>([]);
+  const [validKeys, setValidKeys] = useState<Set<string>>(new Set());
+  const [fetchedCount, setFetchedCount] = useState(0);
+  const [testExcludedCount, setTestExcludedCount] = useState(0);
 
   // Filters
   const [preset, setPreset] = useState<Preset>("thisMonth");
@@ -61,6 +95,12 @@ export default function TrainerDashboardPage() {
   const [brandFilter, setBrandFilter] = useState("");
   const [branchFilter, setBranchFilter] = useState("");
   const [trainerFilter, setTrainerFilter] = useState("");
+  const [search, setSearch] = useState("");
+  const [includeDrafts, setIncludeDrafts] = useState(false);
+
+  // Sorting (trainer table)
+  const [sortKey, setSortKey] = useState<SortKey>("totalSales");
+  const [sortDesc, setSortDesc] = useState(true);
 
   // Expansion
   const [expandedBranchId, setExpandedBranchId] = useState<string | null>(null);
@@ -100,20 +140,20 @@ export default function TrainerDashboardPage() {
           getAllReports(from, to),
         ]);
         if (cancelled) return;
-        // Only count trainer records tied to a submitted/locked non-test daily report.
-        const validKeys = new Set(
+        const nonTest = trainerReports.filter((r) => !r.isTestData);
+        // Reports linked to a submitted/locked, non-test daily report count as operational.
+        const keys = new Set(
           dailyReports
             .filter(
               (r) =>
                 !r.isTestData && (r.status === "submitted" || r.status === "locked")
             )
-            .map((r) => `${r.branchId}_${r.reportDate}`)
+            .map(reportKey)
         );
-        setReports(
-          trainerReports.filter(
-            (r) => !r.isTestData && validKeys.has(`${r.branchId}_${r.reportDate}`)
-          )
-        );
+        setRawReports(nonTest);
+        setValidKeys(keys);
+        setFetchedCount(trainerReports.length);
+        setTestExcludedCount(trainerReports.length - nonTest.length);
       } catch (err) {
         console.error("[TrainerDashboard] load failed", err);
       } finally {
@@ -127,10 +167,31 @@ export default function TrainerDashboardPage() {
     };
   }, [from, to]);
 
+  // Draft filtering (togglable)
+  const baseReports = useMemo(
+    () =>
+      includeDrafts
+        ? rawReports
+        : rawReports.filter((r) => validKeys.has(reportKey(r))),
+    [rawReports, validKeys, includeDrafts]
+  );
+
+  // Branch / brand / trainer-name lookups
   const branchNameOf = useMemo(() => {
     const m = new Map(branches.map((b) => [b.id, b.name]));
     return (id: string) => m.get(id) ?? id;
   }, [branches]);
+
+  const branchBrandOf = useMemo(() => {
+    const m = new Map(branches.map((b) => [b.id, b.brand]));
+    return (id: string) => m.get(id) ?? "-";
+  }, [branches]);
+
+  // Prefer the latest name from trainers collection over the snapshot in the report
+  const trainerNameOf = useMemo(() => {
+    const m = new Map(trainers.map((t) => [t.id, t.name]));
+    return (r: TrainerDailyReport) => m.get(r.trainerId) ?? r.trainerName;
+  }, [trainers]);
 
   const brands = useMemo(
     () => Array.from(new Set(branches.map((b) => b.brand).filter(Boolean))).sort(),
@@ -142,18 +203,25 @@ export default function TrainerDashboardPage() {
     [branches, brandFilter]
   );
 
-  // Filtered reports (brand → branch → trainer)
+  // Filtered reports (brand → branch → trainer → search).
+  // Summary cards and both tables all derive from this one array, so totals always match.
   const filtered = useMemo(() => {
     const brandBranchIds = brandFilter
       ? new Set(branches.filter((b) => b.brand === brandFilter).map((b) => b.id))
       : null;
-    return reports.filter((r) => {
+    const q = search.trim().toLowerCase();
+    return baseReports.filter((r) => {
       if (brandBranchIds && !brandBranchIds.has(r.branchId)) return false;
       if (branchFilter && r.branchId !== branchFilter) return false;
       if (trainerFilter && r.trainerId !== trainerFilter) return false;
+      if (q) {
+        const name = trainerNameOf(r).toLowerCase();
+        const bName = branchNameOf(r.branchId).toLowerCase();
+        if (!name.includes(q) && !bName.includes(q)) return false;
+      }
       return true;
     });
-  }, [reports, branches, brandFilter, branchFilter, trainerFilter]);
+  }, [baseReports, branches, brandFilter, branchFilter, trainerFilter, search, trainerNameOf, branchNameOf]);
 
   // Summary totals
   const summary = useMemo(() => {
@@ -163,18 +231,43 @@ export default function TrainerDashboardPage() {
       personal += r.personalSales;
       classes += r.classCount;
     }
-    return { walkIn, personal, total: walkIn + personal, classes };
+    const total = walkIn + personal;
+    return {
+      walkIn,
+      personal,
+      total,
+      classes,
+      rate: personalSalesRate(personal, total),
+      perClass: salesPerClassOf(total, classes),
+    };
   }, [filtered]);
 
-  // Per-trainer aggregates, ranked by total sales
+  // Verification logging (dev aid)
+  useEffect(() => {
+    if (loading || periodLoading) return;
+    const operationalCount = rawReports.filter((r) => validKeys.has(reportKey(r))).length;
+    const draftExcluded = rawReports.length - operationalCount;
+    console.log("[TrainerDashboard] 집계 검증", {
+      조회기간: `${from} ~ ${to}`,
+      trainerDailyReports_조회개수: fetchedCount,
+      운영집계_포함개수: includeDrafts ? rawReports.length : operationalCount,
+      제외_테스트데이터: testExcludedCount,
+      제외_draft연결: includeDrafts ? 0 : draftExcluded,
+      임시저장포함보기: includeDrafts,
+      전체_총매출: summary.total,
+      전체_수업수: summary.classes,
+    });
+  }, [loading, periodLoading, rawReports, validKeys, fetchedCount, testExcludedCount, includeDrafts, from, to, summary.total, summary.classes]);
+
+  // Per-trainer aggregates
   const trainerAggs = useMemo(() => {
-    const map = new Map<string, TrainerAgg>();
+    const map = new Map<string, Omit<TrainerAgg, "personalRate" | "salesPerClass">>();
     for (const r of filtered) {
       let agg = map.get(r.trainerId);
       if (!agg) {
         agg = {
           trainerId: r.trainerId,
-          trainerName: r.trainerName,
+          trainerName: trainerNameOf(r),
           branchIds: [],
           walkInSales: 0,
           personalSales: 0,
@@ -183,17 +276,42 @@ export default function TrainerDashboardPage() {
         };
         map.set(r.trainerId, agg);
       }
-      agg.trainerName = r.trainerName;
       if (!agg.branchIds.includes(r.branchId)) agg.branchIds.push(r.branchId);
       agg.walkInSales += r.walkInSales;
       agg.personalSales += r.personalSales;
       agg.totalSales += r.totalSales;
       agg.classCount += r.classCount;
     }
-    return Array.from(map.values()).sort((a, b) => b.totalSales - a.totalSales);
-  }, [filtered]);
+    return Array.from(map.values()).map((a) => ({
+      ...a,
+      personalRate: personalSalesRate(a.personalSales, a.totalSales),
+      salesPerClass: salesPerClassOf(a.totalSales, a.classCount),
+    }));
+  }, [filtered, trainerNameOf]);
 
-  // Per-branch aggregates
+  // Sorted trainer rows (null values always last)
+  const sortedTrainerAggs = useMemo(() => {
+    const dir = sortDesc ? -1 : 1;
+    return [...trainerAggs].sort((a, b) => {
+      const av = a[sortKey];
+      const bv = b[sortKey];
+      if (av === null && bv === null) return 0;
+      if (av === null) return 1;
+      if (bv === null) return -1;
+      return (av - bv) * dir;
+    });
+  }, [trainerAggs, sortKey, sortDesc]);
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDesc((p) => !p);
+    } else {
+      setSortKey(key);
+      setSortDesc(true);
+    }
+  }
+
+  // Per-branch aggregates (sorted by total sales)
   const branchAggs = useMemo(() => {
     const map = new Map<string, BranchAgg & { trainerIds: Set<string> }>();
     for (const r of filtered) {
@@ -232,15 +350,14 @@ export default function TrainerDashboardPage() {
   // Trainer aggregates within expanded branch
   const branchTrainerAggs = useMemo(() => {
     if (!expandedBranchId) return [];
-    const map = new Map<string, TrainerAgg>();
+    const map = new Map<string, { trainerId: string; trainerName: string; walkInSales: number; personalSales: number; totalSales: number; classCount: number }>();
     for (const r of filtered) {
       if (r.branchId !== expandedBranchId) continue;
       let agg = map.get(r.trainerId);
       if (!agg) {
         agg = {
           trainerId: r.trainerId,
-          trainerName: r.trainerName,
-          branchIds: [r.branchId],
+          trainerName: trainerNameOf(r),
           walkInSales: 0,
           personalSales: 0,
           totalSales: 0,
@@ -254,10 +371,12 @@ export default function TrainerDashboardPage() {
       agg.classCount += r.classCount;
     }
     return Array.from(map.values()).sort((a, b) => b.totalSales - a.totalSales);
-  }, [filtered, expandedBranchId]);
+  }, [filtered, expandedBranchId, trainerNameOf]);
 
   if (loading) return <LoadingState />;
 
+  // Table footer totals — computed from trainer aggregates to visually verify
+  // they match the summary cards (same source data, so they must agree).
   const trainerTotals = trainerAggs.reduce(
     (acc, t) => ({
       walkIn: acc.walkIn + t.walkInSales,
@@ -268,13 +387,17 @@ export default function TrainerDashboardPage() {
     { walkIn: 0, personal: 0, total: 0, classes: 0 }
   );
 
+  const sortIndicator = (key: SortKey) =>
+    sortKey === key ? (sortDesc ? " ▼" : " ▲") : "";
+
   return (
     <div className="space-y-5">
       {/* Header */}
       <div>
         <h1 className="text-base font-bold text-gray-900">트레이너 실적</h1>
         <p className="text-xs text-gray-500 mt-0.5">
-          {formatDate(from)} ~ {formatDate(to)} · 제출 완료된 보고 기준
+          {formatDate(from)} ~ {formatDate(to)} ·{" "}
+          {includeDrafts ? "임시저장 포함" : "제출 완료된 보고 기준"}
         </p>
       </div>
 
@@ -323,7 +446,7 @@ export default function TrainerDashboardPage() {
           )}
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <select
             value={brandFilter}
             onChange={(e) => {
@@ -357,6 +480,27 @@ export default function TrainerDashboardPage() {
               <option key={t.id} value={t.id}>{t.name}{t.active ? "" : " (비활성)"}</option>
             ))}
           </select>
+
+          <div className="relative">
+            <SearchIcon className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="트레이너명·지점명 검색"
+              className="border border-gray-300 rounded-lg pl-8 pr-3 py-1.5 text-xs w-44 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]"
+            />
+          </div>
+
+          <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer ml-auto">
+            <input
+              type="checkbox"
+              checked={includeDrafts}
+              onChange={(e) => setIncludeDrafts(e.target.checked)}
+              className="rounded border-gray-300"
+            />
+            임시저장 포함 보기
+          </label>
         </div>
       </div>
 
@@ -371,8 +515,8 @@ export default function TrainerDashboardPage() {
               { label: "개인역량 매출", value: won(summary.personal) },
               { label: "총매출", value: won(summary.total), highlight: true },
               { label: "수업 수", value: `${summary.classes.toLocaleString("ko-KR")}회` },
-              { label: "개인역량 비율", value: pct(summary.personal, summary.total) },
-              { label: "수업당 매출", value: perClass(summary.total, summary.classes) },
+              { label: "개인역량 매출 비율", value: fmtRate(summary.rate) },
+              { label: "수업당 매출", value: fmtPerClass(summary.perClass) },
             ].map((card) => (
               <div
                 key={card.label}
@@ -396,15 +540,37 @@ export default function TrainerDashboardPage() {
 
           {filtered.length === 0 ? (
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm py-14 text-center text-sm text-gray-400">
-              해당 기간에 집계된 트레이너 실적이 없습니다.
+              선택한 기간에 등록된 트레이너 실적이 없습니다.
             </div>
           ) : (
             <>
               {/* ── Trainer ranking ─────────────────────────────────────── */}
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-100">
-                  <h2 className="text-sm font-semibold text-gray-800">트레이너별 누적 실적</h2>
-                  <p className="text-xs text-gray-400 mt-0.5">행을 클릭하면 날짜별 상세가 열립니다</p>
+                <div className="px-4 py-3 border-b border-gray-100 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h2 className="text-sm font-semibold text-gray-800">트레이너별 누적 실적</h2>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      행 클릭 → 날짜별 상세 · 컬럼 클릭 → 정렬
+                    </p>
+                  </div>
+                  {/* Mobile sort selector */}
+                  <div className="md:hidden flex items-center gap-1.5">
+                    <select
+                      value={sortKey}
+                      onChange={(e) => { setSortKey(e.target.value as SortKey); setSortDesc(true); }}
+                      className="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white"
+                    >
+                      {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (
+                        <option key={k} value={k}>{SORT_LABELS[k]}</option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => setSortDesc((p) => !p)}
+                      className="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white"
+                    >
+                      {sortDesc ? "높은 순" : "낮은 순"}
+                    </button>
+                  </div>
                 </div>
 
                 {/* Desktop table */}
@@ -412,15 +578,34 @@ export default function TrainerDashboardPage() {
                   <table className="w-full text-sm">
                     <thead className="bg-gray-50 border-b border-gray-200">
                       <tr>
-                        {["순위", "트레이너", "지점", "워크인", "개인역량", "총매출", "개인역량 비율", "수업 수", "수업당 매출"].map((h) => (
-                          <th key={h} className="px-3 py-2.5 text-left text-xs font-medium text-gray-500 whitespace-nowrap">
-                            {h}
+                        <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500">순위</th>
+                        <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500">트레이너</th>
+                        <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500">지점</th>
+                        {(
+                          [
+                            ["walkInSales", "워크인"],
+                            ["personalSales", "개인역량"],
+                            ["totalSales", "총매출"],
+                            ["personalRate", "개인역량 비율"],
+                            ["classCount", "수업 수"],
+                            ["salesPerClass", "수업당 매출"],
+                          ] as [SortKey, string][]
+                        ).map(([key, label]) => (
+                          <th
+                            key={key}
+                            onClick={() => toggleSort(key)}
+                            className={cn(
+                              "px-3 py-2.5 text-left text-xs font-medium whitespace-nowrap cursor-pointer select-none hover:text-gray-800",
+                              sortKey === key ? "text-[#1e3a5f]" : "text-gray-500"
+                            )}
+                          >
+                            {label}{sortIndicator(key)}
                           </th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {trainerAggs.map((t, i) => {
+                      {sortedTrainerAggs.map((t, i) => {
                         const open = expandedTrainerId === t.trainerId;
                         return (
                           <Fragment key={t.trainerId}>
@@ -441,9 +626,9 @@ export default function TrainerDashboardPage() {
                               <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{won(t.walkInSales)}</td>
                               <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{won(t.personalSales)}</td>
                               <td className="px-3 py-2.5 font-semibold text-gray-900 whitespace-nowrap">{won(t.totalSales)}</td>
-                              <td className="px-3 py-2.5 text-gray-700">{pct(t.personalSales, t.totalSales)}</td>
+                              <td className="px-3 py-2.5 text-gray-700">{fmtRate(t.personalRate)}</td>
                               <td className="px-3 py-2.5 text-gray-700">{t.classCount}회</td>
-                              <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{perClass(t.totalSales, t.classCount)}</td>
+                              <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{fmtPerClass(t.salesPerClass)}</td>
                             </tr>
                             {open && (
                               <tr>
@@ -451,7 +636,7 @@ export default function TrainerDashboardPage() {
                                   <table className="w-full text-xs">
                                     <thead>
                                       <tr className="text-gray-400">
-                                        {["날짜", "지점", "워크인", "개인역량", "총매출", "수업 수"].map((h) => (
+                                        {["날짜", "지점", "워크인 매출", "개인역량 매출", "총매출", "수업 수"].map((h) => (
                                           <th key={h} className="px-2 py-1.5 text-left font-medium">{h}</th>
                                         ))}
                                       </tr>
@@ -482,9 +667,9 @@ export default function TrainerDashboardPage() {
                         <td className="px-3 py-2.5 whitespace-nowrap">{won(trainerTotals.walkIn)}</td>
                         <td className="px-3 py-2.5 whitespace-nowrap">{won(trainerTotals.personal)}</td>
                         <td className="px-3 py-2.5 whitespace-nowrap">{won(trainerTotals.total)}</td>
-                        <td className="px-3 py-2.5">{pct(trainerTotals.personal, trainerTotals.total)}</td>
+                        <td className="px-3 py-2.5">{fmtRate(personalSalesRate(trainerTotals.personal, trainerTotals.total))}</td>
                         <td className="px-3 py-2.5">{trainerTotals.classes}회</td>
-                        <td className="px-3 py-2.5 whitespace-nowrap">{perClass(trainerTotals.total, trainerTotals.classes)}</td>
+                        <td className="px-3 py-2.5 whitespace-nowrap">{fmtPerClass(salesPerClassOf(trainerTotals.total, trainerTotals.classes))}</td>
                       </tr>
                     </tfoot>
                   </table>
@@ -492,7 +677,7 @@ export default function TrainerDashboardPage() {
 
                 {/* Mobile cards */}
                 <div className="md:hidden divide-y divide-gray-100">
-                  {trainerAggs.map((t, i) => {
+                  {sortedTrainerAggs.map((t, i) => {
                     const open = expandedTrainerId === t.trainerId;
                     return (
                       <div key={t.trainerId}>
@@ -510,9 +695,9 @@ export default function TrainerDashboardPage() {
                           <p className="text-xs text-gray-400">{t.branchIds.map(branchNameOf).join(", ")}</p>
                           <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-500">
                             <span>워크인 {won(t.walkInSales)}</span>
-                            <span>개인역량 {won(t.personalSales)} ({pct(t.personalSales, t.totalSales)})</span>
+                            <span>개인역량 {won(t.personalSales)} ({fmtRate(t.personalRate)})</span>
                             <span>수업 {t.classCount}회</span>
-                            <span>수업당 {perClass(t.totalSales, t.classCount)}</span>
+                            <span>수업당 {fmtPerClass(t.salesPerClass)}</span>
                           </div>
                         </button>
                         {open && (
@@ -541,7 +726,7 @@ export default function TrainerDashboardPage() {
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-100">
                   <h2 className="text-sm font-semibold text-gray-800">지점별 집계</h2>
-                  <p className="text-xs text-gray-400 mt-0.5">행을 클릭하면 지점 트레이너 목록이 열립니다</p>
+                  <p className="text-xs text-gray-400 mt-0.5">행을 클릭하면 지점 트레이너별 상세가 열립니다</p>
                 </div>
 
                 {/* Desktop table */}
@@ -549,7 +734,7 @@ export default function TrainerDashboardPage() {
                   <table className="w-full text-sm">
                     <thead className="bg-gray-50 border-b border-gray-200">
                       <tr>
-                        {["지점", "워크인", "개인역량", "총매출", "수업 수", "트레이너 수"].map((h) => (
+                        {["지점", "브랜드", "워크인 매출", "개인역량 매출", "총매출", "수업 수", "트레이너 수"].map((h) => (
                           <th key={h} className="px-3 py-2.5 text-left text-xs font-medium text-gray-500 whitespace-nowrap">
                             {h}
                           </th>
@@ -571,6 +756,7 @@ export default function TrainerDashboardPage() {
                                   {branchNameOf(b.branchId)}
                                 </span>
                               </td>
+                              <td className="px-3 py-2.5 text-xs text-gray-500">{branchBrandOf(b.branchId)}</td>
                               <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{won(b.walkInSales)}</td>
                               <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{won(b.personalSales)}</td>
                               <td className="px-3 py-2.5 font-semibold text-gray-900 whitespace-nowrap">{won(b.totalSales)}</td>
@@ -579,11 +765,11 @@ export default function TrainerDashboardPage() {
                             </tr>
                             {open && (
                               <tr>
-                                <td colSpan={6} className="px-4 py-3 bg-gray-50/70">
+                                <td colSpan={7} className="px-4 py-3 bg-gray-50/70">
                                   <table className="w-full text-xs">
                                     <thead>
                                       <tr className="text-gray-400">
-                                        {["트레이너", "워크인", "개인역량", "총매출", "수업 수", "수업당 매출"].map((h) => (
+                                        {["트레이너", "워크인 매출", "개인역량 매출", "총매출", "수업 수", "수업당 매출"].map((h) => (
                                           <th key={h} className="px-2 py-1.5 text-left font-medium">{h}</th>
                                         ))}
                                       </tr>
@@ -596,7 +782,7 @@ export default function TrainerDashboardPage() {
                                           <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">{won(t.personalSales)}</td>
                                           <td className="px-2 py-1.5 font-medium text-gray-800 whitespace-nowrap">{won(t.totalSales)}</td>
                                           <td className="px-2 py-1.5 text-gray-600">{t.classCount}회</td>
-                                          <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">{perClass(t.totalSales, t.classCount)}</td>
+                                          <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">{fmtPerClass(salesPerClassOf(t.totalSales, t.classCount))}</td>
                                         </tr>
                                       ))}
                                     </tbody>
@@ -610,7 +796,7 @@ export default function TrainerDashboardPage() {
                     </tbody>
                     <tfoot className="bg-gray-50 border-t border-gray-200">
                       <tr className="text-xs font-semibold text-gray-700">
-                        <td className="px-3 py-2.5">합계</td>
+                        <td className="px-3 py-2.5" colSpan={2}>합계</td>
                         <td className="px-3 py-2.5 whitespace-nowrap">{won(summary.walkIn)}</td>
                         <td className="px-3 py-2.5 whitespace-nowrap">{won(summary.personal)}</td>
                         <td className="px-3 py-2.5 whitespace-nowrap">{won(summary.total)}</td>
@@ -632,7 +818,10 @@ export default function TrainerDashboardPage() {
                           className="w-full text-left px-4 py-3 space-y-1.5"
                         >
                           <div className="flex items-center justify-between">
-                            <span className="text-sm font-medium text-gray-900">{branchNameOf(b.branchId)}</span>
+                            <span className="text-sm font-medium text-gray-900">
+                              {branchNameOf(b.branchId)}
+                              <span className="ml-1.5 text-xs font-normal text-gray-400">{branchBrandOf(b.branchId)}</span>
+                            </span>
                             <span className="text-sm font-bold text-[#1e3a5f]">{won(b.totalSales)}</span>
                           </div>
                           <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-500">
