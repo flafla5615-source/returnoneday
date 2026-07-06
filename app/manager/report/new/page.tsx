@@ -34,9 +34,11 @@ import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 type TrainerPerfState = {
   trainerId: string;
   trainerName: string;
-  walkInSales: number;
-  personalSales: number;
-  classCount: number;
+  ptSessionCount: number;
+  otSessionCount: number;
+  groupSessionCount: number;
+  otherSessionCount: number;
+  memo: string;
 };
 
 const CLAIM_CATEGORIES = ["회원 응대", "환불", "시설 불만", "직원 불만", "기타"];
@@ -184,13 +186,9 @@ export default function NewReportPage() {
     setPromotionMemo(report.promotionMemo ?? "");
   }, []);
 
-  function updateTrainerPerf(
-    trainerId: string,
-    field: keyof Omit<TrainerPerfState, "trainerId" | "trainerName">,
-    value: number
-  ) {
+  function updateTrainerPerf(trainerId: string, patch: Partial<TrainerPerfState>) {
     setTrainerPerfs((prev) =>
-      prev.map((p) => (p.trainerId === trainerId ? { ...p, [field]: value } : p))
+      prev.map((p) => (p.trainerId === trainerId ? { ...p, ...patch } : p))
     );
   }
 
@@ -263,9 +261,11 @@ export default function NewReportPage() {
             return {
               trainerId: t.id,
               trainerName: t.name,
-              walkInSales: ep?.walkInSales ?? 0,
-              personalSales: ep?.personalSales ?? 0,
-              classCount: ep?.classCount ?? 0,
+              ptSessionCount: ep?.ptSessionCount ?? 0,
+              otSessionCount: ep?.otSessionCount ?? 0,
+              groupSessionCount: ep?.groupSessionCount ?? 0,
+              otherSessionCount: ep?.otherSessionCount ?? 0,
+              memo: ep?.memo ?? "",
             };
           })
         );
@@ -421,7 +421,7 @@ export default function NewReportPage() {
         }
       }
 
-      // Save trainer daily reports
+      // Save trainer daily reports (session counts)
       const trainerErrors: string[] = [];
       for (const perf of trainerPerfs) {
         try {
@@ -430,9 +430,11 @@ export default function NewReportPage() {
             reportDate,
             trainerId: perf.trainerId,
             trainerName: perf.trainerName,
-            walkInSales: perf.walkInSales,
-            personalSales: perf.personalSales,
-            classCount: perf.classCount,
+            ptSessionCount: perf.ptSessionCount,
+            otSessionCount: perf.otSessionCount,
+            groupSessionCount: perf.groupSessionCount,
+            otherSessionCount: perf.otherSessionCount,
+            memo: perf.memo,
             writerUid: user.uid,
           });
         } catch (tErr) {
@@ -941,80 +943,68 @@ export default function NewReportPage() {
           ) : (
             <>
               {trainerPerfs.map((perf) => {
-                const totalSales = perf.walkInSales + perf.personalSales;
+                const totalSessions =
+                  perf.ptSessionCount + perf.otSessionCount +
+                  perf.groupSessionCount + perf.otherSessionCount;
                 return (
                   <div
                     key={perf.trainerId}
                     className="border border-gray-100 rounded-xl p-4 space-y-3"
                   >
-                    <p className="text-sm font-semibold text-gray-800">{perf.trainerName}</p>
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-semibold text-gray-800">{perf.trainerName}</p>
+                      <p className="text-sm font-bold text-[#1e3a5f]">
+                        총 세션 {totalSessions}회
+                        <span className="ml-1 text-xs font-normal text-gray-400">자동 계산</span>
+                      </p>
+                    </div>
 
                     <div className="grid grid-cols-2 gap-3">
                       {(
                         [
-                          { label: "워크인 매출", field: "walkInSales" as const, val: perf.walkInSales },
-                          { label: "개인역량 매출", field: "personalSales" as const, val: perf.personalSales },
+                          { label: "PT 수업", field: "ptSessionCount" as const, val: perf.ptSessionCount },
+                          { label: "OT / 체험 수업", field: "otSessionCount" as const, val: perf.otSessionCount },
+                          { label: "그룹수업", field: "groupSessionCount" as const, val: perf.groupSessionCount },
+                          { label: "기타 수업", field: "otherSessionCount" as const, val: perf.otherSessionCount },
                         ] as const
                       ).map(({ label, field, val }) => (
                         <div key={field} className="flex flex-col gap-1">
                           <label className="text-xs font-medium text-gray-700">{label}</label>
                           <div className="flex items-center gap-1">
                             <input
-                              type="text"
+                              type="number"
                               inputMode="numeric"
-                              value={val > 0 ? val.toLocaleString("ko-KR") : ""}
+                              min={0}
+                              step={1}
+                              value={val === 0 ? "" : val}
                               placeholder="0"
                               disabled={!canEditReport}
                               onChange={(e) => {
-                                const n = parseInt(
-                                  e.target.value.replace(/[^0-9]/g, ""),
-                                  10
-                                );
-                                updateTrainerPerf(
-                                  perf.trainerId,
-                                  field,
-                                  isNaN(n) || n < 0 ? 0 : n
-                                );
+                                const n = parseInt(e.target.value, 10);
+                                updateTrainerPerf(perf.trainerId, {
+                                  [field]: isNaN(n) || n < 0 ? 0 : Math.floor(n),
+                                });
                               }}
                               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-50 disabled:text-gray-400"
                             />
-                            <span className="text-xs text-gray-500 whitespace-nowrap">원</span>
+                            <span className="text-xs text-gray-500 whitespace-nowrap">회</span>
                           </div>
                         </div>
                       ))}
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="flex flex-col gap-1">
-                        <label className="text-xs font-medium text-gray-700">수업 수</label>
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="number"
-                            inputMode="numeric"
-                            min={0}
-                            value={perf.classCount === 0 ? "" : perf.classCount}
-                            placeholder="0"
-                            disabled={!canEditReport}
-                            onChange={(e) => {
-                              const n = parseInt(e.target.value, 10);
-                              updateTrainerPerf(
-                                perf.trainerId,
-                                "classCount",
-                                isNaN(n) || n < 0 ? 0 : Math.floor(n)
-                              );
-                            }}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-50 disabled:text-gray-400"
-                          />
-                          <span className="text-xs text-gray-500 whitespace-nowrap">회</span>
-                        </div>
-                      </div>
-
-                      <div className="bg-gray-50 rounded-lg px-3 py-2 flex flex-col justify-center">
-                        <p className="text-xs text-gray-500">총매출 (자동)</p>
-                        <p className="text-sm font-bold text-gray-800">
-                          {totalSales.toLocaleString("ko-KR")}원
-                        </p>
-                      </div>
+                    <div>
+                      <label className="text-xs font-medium text-gray-700 block mb-1">메모 (선택)</label>
+                      <textarea
+                        value={perf.memo}
+                        rows={1}
+                        placeholder="특이사항 메모"
+                        disabled={!canEditReport}
+                        onChange={(e) =>
+                          updateTrainerPerf(perf.trainerId, { memo: e.target.value })
+                        }
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 resize-none disabled:bg-gray-50 disabled:text-gray-400"
+                      />
                     </div>
                   </div>
                 );
@@ -1022,16 +1012,15 @@ export default function NewReportPage() {
 
               <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 flex items-center justify-between">
                 <span className="text-xs text-blue-700 font-medium">트레이너 합계</span>
-                <div className="text-right">
-                  <p className="text-sm font-bold text-blue-800">
-                    {trainerPerfs
-                      .reduce((s, p) => s + p.walkInSales + p.personalSales, 0)
-                      .toLocaleString("ko-KR")}원
-                  </p>
-                  <p className="text-xs text-blue-500">
-                    수업 {trainerPerfs.reduce((s, p) => s + p.classCount, 0)}회
-                  </p>
-                </div>
+                <p className="text-sm font-bold text-blue-800">
+                  총 세션{" "}
+                  {trainerPerfs.reduce(
+                    (s, p) =>
+                      s + p.ptSessionCount + p.otSessionCount +
+                      p.groupSessionCount + p.otherSessionCount,
+                    0
+                  )}회
+                </p>
               </div>
             </>
           )}

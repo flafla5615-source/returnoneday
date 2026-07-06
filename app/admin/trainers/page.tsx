@@ -13,84 +13,88 @@ import { ChevronDownIcon, ChevronRightIcon, SearchIcon } from "lucide-react";
 
 type Preset = "today" | "7days" | "thisMonth" | "custom";
 
-type SortKey =
-  | "walkInSales"
-  | "personalSales"
-  | "totalSales"
-  | "personalRate"
-  | "classCount"
-  | "salesPerClass";
+type SortKey = "pt" | "ot" | "group" | "other" | "total" | "avgPerDay";
 
 type TrainerAgg = {
   trainerId: string;
   trainerName: string;
   branchIds: string[];
-  walkInSales: number;
-  personalSales: number;
-  totalSales: number;
-  classCount: number;
-  personalRate: number | null;
-  salesPerClass: number | null;
+  pt: number;
+  ot: number;
+  group: number;
+  other: number;
+  total: number;
+  dayCount: number;
+  avgPerDay: number | null;
 };
 
 type BranchAgg = {
   branchId: string;
-  walkInSales: number;
-  personalSales: number;
-  totalSales: number;
-  classCount: number;
+  pt: number;
+  ot: number;
+  group: number;
+  other: number;
+  total: number;
   trainerCount: number;
 };
 
 const SORT_LABELS: Record<SortKey, string> = {
-  walkInSales: "워크인 매출",
-  personalSales: "개인역량 매출",
-  totalSales: "총매출",
-  personalRate: "개인역량 비율",
-  classCount: "수업 수",
-  salesPerClass: "수업당 매출",
+  pt: "PT 세션",
+  ot: "OT / 체험",
+  group: "그룹수업",
+  other: "기타",
+  total: "총 세션",
+  avgPerDay: "일 평균 세션",
 };
 
-function won(n: number): string {
-  return `${n.toLocaleString("ko-KR")}원`;
-}
+// Legacy 문서(금액 필드만 있는 과거 데이터)는 세션 필드가 없으므로 0 처리
+const ptOf = (r: TrainerDailyReport) => r.ptSessionCount ?? 0;
+const otOf = (r: TrainerDailyReport) => r.otSessionCount ?? 0;
+const groupOf = (r: TrainerDailyReport) => r.groupSessionCount ?? 0;
+const otherOf = (r: TrainerDailyReport) => r.otherSessionCount ?? 0;
+const totalOf = (r: TrainerDailyReport) => r.totalSessionCount ?? 0;
 
-function personalSalesRate(personal: number, total: number): number | null {
-  return total === 0 ? null : (personal / total) * 100;
-}
-
-function salesPerClassOf(total: number, classes: number): number | null {
-  return classes === 0 ? null : total / classes;
-}
-
-function fmtRate(rate: number | null): string {
-  return rate === null ? "-" : `${Math.round(rate)}%`;
-}
-
-function fmtPerClass(v: number | null): string {
-  return v === null ? "-" : won(Math.round(v));
+function fmtAvg(v: number | null): string {
+  return v === null ? "-" : v.toFixed(1).replace(/\.0$/, "");
 }
 
 function reportKey(r: { branchId: string; reportDate: string }): string {
   return `${r.branchId}_${r.reportDate}`;
 }
 
+function sumSessions(reports: TrainerDailyReport[]) {
+  let pt = 0, ot = 0, group = 0, other = 0, total = 0;
+  for (const r of reports) {
+    pt += ptOf(r);
+    ot += otOf(r);
+    group += groupOf(r);
+    other += otherOf(r);
+    total += totalOf(r);
+  }
+  return { pt, ot, group, other, total };
+}
+
 export default function TrainerDashboardPage() {
   const today = todayYMD();
+  const monthFrom = format(startOfMonth(new Date()), "yyyy-MM-dd");
+
   const [branches, setBranches] = useState<Branch[]>([]);
   const [trainers, setTrainers] = useState<Trainer[]>([]);
   const [loading, setLoading] = useState(true);
   const [periodLoading, setPeriodLoading] = useState(false);
 
-  // Raw period data (test data already removed) + validity info for draft filtering
+  // Selected-period data (test data already removed) + validity keys for draft filtering
   const [rawReports, setRawReports] = useState<TrainerDailyReport[]>([]);
   const [validKeys, setValidKeys] = useState<Set<string>>(new Set());
+  // This-month data for the fixed "오늘 총 세션 / 이번 달 누적 세션" cards
+  const [monthRawReports, setMonthRawReports] = useState<TrainerDailyReport[]>([]);
+  const [monthValidKeys, setMonthValidKeys] = useState<Set<string>>(new Set());
   const [fetchedCount, setFetchedCount] = useState(0);
   const [testExcludedCount, setTestExcludedCount] = useState(0);
 
   // Filters
   const [preset, setPreset] = useState<Preset>("thisMonth");
-  const [customFrom, setCustomFrom] = useState(format(startOfMonth(new Date()), "yyyy-MM-dd"));
+  const [customFrom, setCustomFrom] = useState(monthFrom);
   const [customTo, setCustomTo] = useState(today);
   const [brandFilter, setBrandFilter] = useState("");
   const [branchFilter, setBranchFilter] = useState("");
@@ -99,7 +103,7 @@ export default function TrainerDashboardPage() {
   const [includeDrafts, setIncludeDrafts] = useState(false);
 
   // Sorting (trainer table)
-  const [sortKey, setSortKey] = useState<SortKey>("totalSales");
+  const [sortKey, setSortKey] = useState<SortKey>("total");
   const [sortDesc, setSortDesc] = useState(true);
 
   // Expansion
@@ -113,13 +117,13 @@ export default function TrainerDashboardPage() {
       case "7days":
         return { from: format(subDays(new Date(), 6), "yyyy-MM-dd"), to: today };
       case "thisMonth":
-        return { from: format(startOfMonth(new Date()), "yyyy-MM-dd"), to: today };
+        return { from: monthFrom, to: today };
       case "custom":
         return customFrom <= customTo
           ? { from: customFrom, to: customTo }
           : { from: customTo, to: customFrom };
     }
-  }, [preset, customFrom, customTo, today]);
+  }, [preset, customFrom, customTo, today, monthFrom]);
 
   useEffect(() => {
     Promise.all([getAllBranchesIncludingInactive(), getAllTrainers()]).then(([bs, ts]) => {
@@ -135,25 +139,40 @@ export default function TrainerDashboardPage() {
     async function loadPeriod() {
       setPeriodLoading(true);
       try {
-        const [trainerReports, dailyReports] = await Promise.all([
-          getAllTrainerDailyReportsByPeriod(from, to),
-          getAllReports(from, to),
-        ]);
+        const isMonthRange = from === monthFrom && to === today;
+        const [trainerReports, dailyReports, monthTrainerReports, monthDailyReports] =
+          await Promise.all([
+            getAllTrainerDailyReportsByPeriod(from, to),
+            getAllReports(from, to),
+            isMonthRange ? null : getAllTrainerDailyReportsByPeriod(monthFrom, today),
+            isMonthRange ? null : getAllReports(monthFrom, today),
+          ]);
         if (cancelled) return;
+
+        const buildValidKeys = (reports: Awaited<ReturnType<typeof getAllReports>>) =>
+          new Set(
+            reports
+              .filter(
+                (r) =>
+                  !r.isTestData && (r.status === "submitted" || r.status === "locked")
+              )
+              .map(reportKey)
+          );
+
         const nonTest = trainerReports.filter((r) => !r.isTestData);
-        // Reports linked to a submitted/locked, non-test daily report count as operational.
-        const keys = new Set(
-          dailyReports
-            .filter(
-              (r) =>
-                !r.isTestData && (r.status === "submitted" || r.status === "locked")
-            )
-            .map(reportKey)
-        );
+        const keys = buildValidKeys(dailyReports);
         setRawReports(nonTest);
         setValidKeys(keys);
         setFetchedCount(trainerReports.length);
         setTestExcludedCount(trainerReports.length - nonTest.length);
+
+        if (monthTrainerReports && monthDailyReports) {
+          setMonthRawReports(monthTrainerReports.filter((r) => !r.isTestData));
+          setMonthValidKeys(buildValidKeys(monthDailyReports));
+        } else {
+          setMonthRawReports(nonTest);
+          setMonthValidKeys(keys);
+        }
       } catch (err) {
         console.error("[TrainerDashboard] load failed", err);
       } finally {
@@ -165,16 +184,7 @@ export default function TrainerDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [from, to]);
-
-  // Draft filtering (togglable)
-  const baseReports = useMemo(
-    () =>
-      includeDrafts
-        ? rawReports
-        : rawReports.filter((r) => validKeys.has(reportKey(r))),
-    [rawReports, validKeys, includeDrafts]
-  );
+  }, [from, to, monthFrom, today]);
 
   // Branch / brand / trainer-name lookups
   const branchNameOf = useMemo(() => {
@@ -203,14 +213,14 @@ export default function TrainerDashboardPage() {
     [branches, brandFilter]
   );
 
-  // Filtered reports (brand → branch → trainer → search).
-  // Summary cards and both tables all derive from this one array, so totals always match.
-  const filtered = useMemo(() => {
+  // Shared filter predicate (brand → branch → trainer → search) applied to both
+  // the selected-period set and the month set so all numbers stay consistent.
+  const passesFilters = useMemo(() => {
     const brandBranchIds = brandFilter
       ? new Set(branches.filter((b) => b.brand === brandFilter).map((b) => b.id))
       : null;
     const q = search.trim().toLowerCase();
-    return baseReports.filter((r) => {
+    return (r: TrainerDailyReport) => {
       if (brandBranchIds && !brandBranchIds.has(r.branchId)) return false;
       if (branchFilter && r.branchId !== branchFilter) return false;
       if (trainerFilter && r.trainerId !== trainerFilter) return false;
@@ -220,27 +230,31 @@ export default function TrainerDashboardPage() {
         if (!name.includes(q) && !bName.includes(q)) return false;
       }
       return true;
-    });
-  }, [baseReports, branches, brandFilter, branchFilter, trainerFilter, search, trainerNameOf, branchNameOf]);
-
-  // Summary totals
-  const summary = useMemo(() => {
-    let walkIn = 0, personal = 0, classes = 0;
-    for (const r of filtered) {
-      walkIn += r.walkInSales;
-      personal += r.personalSales;
-      classes += r.classCount;
-    }
-    const total = walkIn + personal;
-    return {
-      walkIn,
-      personal,
-      total,
-      classes,
-      rate: personalSalesRate(personal, total),
-      perClass: salesPerClassOf(total, classes),
     };
-  }, [filtered]);
+  }, [branches, brandFilter, branchFilter, trainerFilter, search, trainerNameOf, branchNameOf]);
+
+  // Selected-period operational reports — tables + PT/OT/그룹/기타 cards
+  const filtered = useMemo(() => {
+    const base = includeDrafts
+      ? rawReports
+      : rawReports.filter((r) => validKeys.has(reportKey(r)));
+    return base.filter(passesFilters);
+  }, [rawReports, validKeys, includeDrafts, passesFilters]);
+
+  // This-month operational reports — 오늘/이번 달 카드 전용
+  const monthFiltered = useMemo(() => {
+    const base = includeDrafts
+      ? monthRawReports
+      : monthRawReports.filter((r) => monthValidKeys.has(reportKey(r)));
+    return base.filter(passesFilters);
+  }, [monthRawReports, monthValidKeys, includeDrafts, passesFilters]);
+
+  const summary = useMemo(() => sumSessions(filtered), [filtered]);
+  const monthTotal = useMemo(() => sumSessions(monthFiltered).total, [monthFiltered]);
+  const todayTotal = useMemo(
+    () => sumSessions(monthFiltered.filter((r) => r.reportDate === today)).total,
+    [monthFiltered, today]
+  );
 
   // Verification logging (dev aid)
   useEffect(() => {
@@ -254,14 +268,15 @@ export default function TrainerDashboardPage() {
       제외_테스트데이터: testExcludedCount,
       제외_draft연결: includeDrafts ? 0 : draftExcluded,
       임시저장포함보기: includeDrafts,
-      전체_총매출: summary.total,
-      전체_수업수: summary.classes,
+      전체_총세션: summary.total,
+      오늘_총세션: todayTotal,
+      이번달_누적세션: monthTotal,
     });
-  }, [loading, periodLoading, rawReports, validKeys, fetchedCount, testExcludedCount, includeDrafts, from, to, summary.total, summary.classes]);
+  }, [loading, periodLoading, rawReports, validKeys, fetchedCount, testExcludedCount, includeDrafts, from, to, summary.total, todayTotal, monthTotal]);
 
   // Per-trainer aggregates
   const trainerAggs = useMemo(() => {
-    const map = new Map<string, Omit<TrainerAgg, "personalRate" | "salesPerClass">>();
+    const map = new Map<string, Omit<TrainerAgg, "avgPerDay"> & { days: Set<string> }>();
     for (const r of filtered) {
       let agg = map.get(r.trainerId);
       if (!agg) {
@@ -269,23 +284,28 @@ export default function TrainerDashboardPage() {
           trainerId: r.trainerId,
           trainerName: trainerNameOf(r),
           branchIds: [],
-          walkInSales: 0,
-          personalSales: 0,
-          totalSales: 0,
-          classCount: 0,
+          pt: 0,
+          ot: 0,
+          group: 0,
+          other: 0,
+          total: 0,
+          dayCount: 0,
+          days: new Set(),
         };
         map.set(r.trainerId, agg);
       }
       if (!agg.branchIds.includes(r.branchId)) agg.branchIds.push(r.branchId);
-      agg.walkInSales += r.walkInSales;
-      agg.personalSales += r.personalSales;
-      agg.totalSales += r.totalSales;
-      agg.classCount += r.classCount;
+      agg.pt += ptOf(r);
+      agg.ot += otOf(r);
+      agg.group += groupOf(r);
+      agg.other += otherOf(r);
+      agg.total += totalOf(r);
+      agg.days.add(r.reportDate);
     }
-    return Array.from(map.values()).map((a) => ({
+    return Array.from(map.values()).map(({ days, ...a }) => ({
       ...a,
-      personalRate: personalSalesRate(a.personalSales, a.totalSales),
-      salesPerClass: salesPerClassOf(a.totalSales, a.classCount),
+      dayCount: days.size,
+      avgPerDay: days.size === 0 ? null : a.total / days.size,
     }));
   }, [filtered, trainerNameOf]);
 
@@ -311,7 +331,7 @@ export default function TrainerDashboardPage() {
     }
   }
 
-  // Per-branch aggregates (sorted by total sales)
+  // Per-branch aggregates (sorted by total sessions)
   const branchAggs = useMemo(() => {
     const map = new Map<string, BranchAgg & { trainerIds: Set<string> }>();
     for (const r of filtered) {
@@ -319,24 +339,26 @@ export default function TrainerDashboardPage() {
       if (!agg) {
         agg = {
           branchId: r.branchId,
-          walkInSales: 0,
-          personalSales: 0,
-          totalSales: 0,
-          classCount: 0,
+          pt: 0,
+          ot: 0,
+          group: 0,
+          other: 0,
+          total: 0,
           trainerCount: 0,
           trainerIds: new Set(),
         };
         map.set(r.branchId, agg);
       }
-      agg.walkInSales += r.walkInSales;
-      agg.personalSales += r.personalSales;
-      agg.totalSales += r.totalSales;
-      agg.classCount += r.classCount;
+      agg.pt += ptOf(r);
+      agg.ot += otOf(r);
+      agg.group += groupOf(r);
+      agg.other += otherOf(r);
+      agg.total += totalOf(r);
       agg.trainerIds.add(r.trainerId);
     }
     return Array.from(map.values())
       .map(({ trainerIds, ...rest }) => ({ ...rest, trainerCount: trainerIds.size }))
-      .sort((a, b) => b.totalSales - a.totalSales);
+      .sort((a, b) => b.total - a.total);
   }, [filtered]);
 
   // Date detail for expanded trainer
@@ -350,7 +372,7 @@ export default function TrainerDashboardPage() {
   // Trainer aggregates within expanded branch
   const branchTrainerAggs = useMemo(() => {
     if (!expandedBranchId) return [];
-    const map = new Map<string, { trainerId: string; trainerName: string; walkInSales: number; personalSales: number; totalSales: number; classCount: number }>();
+    const map = new Map<string, { trainerId: string; trainerName: string; pt: number; ot: number; group: number; other: number; total: number }>();
     for (const r of filtered) {
       if (r.branchId !== expandedBranchId) continue;
       let agg = map.get(r.trainerId);
@@ -358,19 +380,21 @@ export default function TrainerDashboardPage() {
         agg = {
           trainerId: r.trainerId,
           trainerName: trainerNameOf(r),
-          walkInSales: 0,
-          personalSales: 0,
-          totalSales: 0,
-          classCount: 0,
+          pt: 0,
+          ot: 0,
+          group: 0,
+          other: 0,
+          total: 0,
         };
         map.set(r.trainerId, agg);
       }
-      agg.walkInSales += r.walkInSales;
-      agg.personalSales += r.personalSales;
-      agg.totalSales += r.totalSales;
-      agg.classCount += r.classCount;
+      agg.pt += ptOf(r);
+      agg.ot += otOf(r);
+      agg.group += groupOf(r);
+      agg.other += otherOf(r);
+      agg.total += totalOf(r);
     }
-    return Array.from(map.values()).sort((a, b) => b.totalSales - a.totalSales);
+    return Array.from(map.values()).sort((a, b) => b.total - a.total);
   }, [filtered, expandedBranchId, trainerNameOf]);
 
   if (loading) return <LoadingState />;
@@ -379,12 +403,13 @@ export default function TrainerDashboardPage() {
   // they match the summary cards (same source data, so they must agree).
   const trainerTotals = trainerAggs.reduce(
     (acc, t) => ({
-      walkIn: acc.walkIn + t.walkInSales,
-      personal: acc.personal + t.personalSales,
-      total: acc.total + t.totalSales,
-      classes: acc.classes + t.classCount,
+      pt: acc.pt + t.pt,
+      ot: acc.ot + t.ot,
+      group: acc.group + t.group,
+      other: acc.other + t.other,
+      total: acc.total + t.total,
     }),
-    { walkIn: 0, personal: 0, total: 0, classes: 0 }
+    { pt: 0, ot: 0, group: 0, other: 0, total: 0 }
   );
 
   const sortIndicator = (key: SortKey) =>
@@ -397,7 +422,7 @@ export default function TrainerDashboardPage() {
         <h1 className="text-base font-bold text-gray-900">트레이너 실적</h1>
         <p className="text-xs text-gray-500 mt-0.5">
           {formatDate(from)} ~ {formatDate(to)} ·{" "}
-          {includeDrafts ? "임시저장 포함" : "제출 완료된 보고 기준"}
+          {includeDrafts ? "임시저장 포함" : "제출 완료된 보고 기준"} · 수업 세션 기준
         </p>
       </div>
 
@@ -511,12 +536,12 @@ export default function TrainerDashboardPage() {
           {/* Summary cards */}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
             {[
-              { label: "워크인 매출", value: won(summary.walkIn) },
-              { label: "개인역량 매출", value: won(summary.personal) },
-              { label: "총매출", value: won(summary.total), highlight: true },
-              { label: "수업 수", value: `${summary.classes.toLocaleString("ko-KR")}회` },
-              { label: "개인역량 매출 비율", value: fmtRate(summary.rate) },
-              { label: "수업당 매출", value: fmtPerClass(summary.perClass) },
+              { label: "오늘 총 세션", value: `${todayTotal.toLocaleString("ko-KR")}회`, highlight: true },
+              { label: "이번 달 누적 세션", value: `${monthTotal.toLocaleString("ko-KR")}회`, highlight: true },
+              { label: "PT 세션", value: `${summary.pt.toLocaleString("ko-KR")}회` },
+              { label: "OT / 체험 세션", value: `${summary.ot.toLocaleString("ko-KR")}회` },
+              { label: "그룹수업 세션", value: `${summary.group.toLocaleString("ko-KR")}회` },
+              { label: "기타 세션", value: `${summary.other.toLocaleString("ko-KR")}회` },
             ].map((card) => (
               <div
                 key={card.label}
@@ -528,7 +553,7 @@ export default function TrainerDashboardPage() {
                 <p className="text-xs text-gray-500">{card.label}</p>
                 <p
                   className={cn(
-                    "text-sm font-bold mt-1 break-all",
+                    "text-sm font-bold mt-1",
                     card.highlight ? "text-[#1e3a5f]" : "text-gray-800"
                   )}
                 >
@@ -548,7 +573,7 @@ export default function TrainerDashboardPage() {
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-100 flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <h2 className="text-sm font-semibold text-gray-800">트레이너별 누적 실적</h2>
+                    <h2 className="text-sm font-semibold text-gray-800">트레이너별 누적 세션</h2>
                     <p className="text-xs text-gray-400 mt-0.5">
                       행 클릭 → 날짜별 상세 · 컬럼 클릭 → 정렬
                     </p>
@@ -583,12 +608,12 @@ export default function TrainerDashboardPage() {
                         <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500">지점</th>
                         {(
                           [
-                            ["walkInSales", "워크인"],
-                            ["personalSales", "개인역량"],
-                            ["totalSales", "총매출"],
-                            ["personalRate", "개인역량 비율"],
-                            ["classCount", "수업 수"],
-                            ["salesPerClass", "수업당 매출"],
+                            ["pt", "PT 세션"],
+                            ["ot", "OT / 체험"],
+                            ["group", "그룹수업"],
+                            ["other", "기타"],
+                            ["total", "총 세션"],
+                            ["avgPerDay", "일 평균 세션"],
                           ] as [SortKey, string][]
                         ).map(([key, label]) => (
                           <th
@@ -623,12 +648,12 @@ export default function TrainerDashboardPage() {
                               <td className="px-3 py-2.5 text-xs text-gray-500">
                                 {t.branchIds.map(branchNameOf).join(", ")}
                               </td>
-                              <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{won(t.walkInSales)}</td>
-                              <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{won(t.personalSales)}</td>
-                              <td className="px-3 py-2.5 font-semibold text-gray-900 whitespace-nowrap">{won(t.totalSales)}</td>
-                              <td className="px-3 py-2.5 text-gray-700">{fmtRate(t.personalRate)}</td>
-                              <td className="px-3 py-2.5 text-gray-700">{t.classCount}회</td>
-                              <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{fmtPerClass(t.salesPerClass)}</td>
+                              <td className="px-3 py-2.5 text-gray-700">{t.pt}회</td>
+                              <td className="px-3 py-2.5 text-gray-700">{t.ot}회</td>
+                              <td className="px-3 py-2.5 text-gray-700">{t.group}회</td>
+                              <td className="px-3 py-2.5 text-gray-700">{t.other}회</td>
+                              <td className="px-3 py-2.5 font-semibold text-gray-900">{t.total}회</td>
+                              <td className="px-3 py-2.5 text-gray-700">{fmtAvg(t.avgPerDay)}회</td>
                             </tr>
                             {open && (
                               <tr>
@@ -636,7 +661,7 @@ export default function TrainerDashboardPage() {
                                   <table className="w-full text-xs">
                                     <thead>
                                       <tr className="text-gray-400">
-                                        {["날짜", "지점", "워크인 매출", "개인역량 매출", "총매출", "수업 수"].map((h) => (
+                                        {["날짜", "지점", "PT 세션", "OT / 체험", "그룹수업", "기타", "총 세션", "메모"].map((h) => (
                                           <th key={h} className="px-2 py-1.5 text-left font-medium">{h}</th>
                                         ))}
                                       </tr>
@@ -644,12 +669,14 @@ export default function TrainerDashboardPage() {
                                     <tbody className="divide-y divide-gray-100">
                                       {trainerDateRows.map((r) => (
                                         <tr key={r.id}>
-                                          <td className="px-2 py-1.5 text-gray-600">{formatDate(r.reportDate)}</td>
+                                          <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">{formatDate(r.reportDate)}</td>
                                           <td className="px-2 py-1.5 text-gray-600">{branchNameOf(r.branchId)}</td>
-                                          <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">{won(r.walkInSales)}</td>
-                                          <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">{won(r.personalSales)}</td>
-                                          <td className="px-2 py-1.5 font-medium text-gray-800 whitespace-nowrap">{won(r.totalSales)}</td>
-                                          <td className="px-2 py-1.5 text-gray-600">{r.classCount}회</td>
+                                          <td className="px-2 py-1.5 text-gray-600">{ptOf(r)}회</td>
+                                          <td className="px-2 py-1.5 text-gray-600">{otOf(r)}회</td>
+                                          <td className="px-2 py-1.5 text-gray-600">{groupOf(r)}회</td>
+                                          <td className="px-2 py-1.5 text-gray-600">{otherOf(r)}회</td>
+                                          <td className="px-2 py-1.5 font-medium text-gray-800">{totalOf(r)}회</td>
+                                          <td className="px-2 py-1.5 text-gray-500">{r.memo || "-"}</td>
                                         </tr>
                                       ))}
                                     </tbody>
@@ -664,12 +691,12 @@ export default function TrainerDashboardPage() {
                     <tfoot className="bg-gray-50 border-t border-gray-200">
                       <tr className="text-xs font-semibold text-gray-700">
                         <td className="px-3 py-2.5" colSpan={3}>합계</td>
-                        <td className="px-3 py-2.5 whitespace-nowrap">{won(trainerTotals.walkIn)}</td>
-                        <td className="px-3 py-2.5 whitespace-nowrap">{won(trainerTotals.personal)}</td>
-                        <td className="px-3 py-2.5 whitespace-nowrap">{won(trainerTotals.total)}</td>
-                        <td className="px-3 py-2.5">{fmtRate(personalSalesRate(trainerTotals.personal, trainerTotals.total))}</td>
-                        <td className="px-3 py-2.5">{trainerTotals.classes}회</td>
-                        <td className="px-3 py-2.5 whitespace-nowrap">{fmtPerClass(salesPerClassOf(trainerTotals.total, trainerTotals.classes))}</td>
+                        <td className="px-3 py-2.5">{trainerTotals.pt}회</td>
+                        <td className="px-3 py-2.5">{trainerTotals.ot}회</td>
+                        <td className="px-3 py-2.5">{trainerTotals.group}회</td>
+                        <td className="px-3 py-2.5">{trainerTotals.other}회</td>
+                        <td className="px-3 py-2.5">{trainerTotals.total}회</td>
+                        <td className="px-3 py-2.5">-</td>
                       </tr>
                     </tfoot>
                   </table>
@@ -690,14 +717,15 @@ export default function TrainerDashboardPage() {
                               <span className="text-gray-400 mr-1.5">{i + 1}.</span>
                               {t.trainerName}
                             </span>
-                            <span className="text-sm font-bold text-[#1e3a5f]">{won(t.totalSales)}</span>
+                            <span className="text-sm font-bold text-[#1e3a5f]">총 {t.total}회</span>
                           </div>
                           <p className="text-xs text-gray-400">{t.branchIds.map(branchNameOf).join(", ")}</p>
                           <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-500">
-                            <span>워크인 {won(t.walkInSales)}</span>
-                            <span>개인역량 {won(t.personalSales)} ({fmtRate(t.personalRate)})</span>
-                            <span>수업 {t.classCount}회</span>
-                            <span>수업당 {fmtPerClass(t.salesPerClass)}</span>
+                            <span>PT {t.pt}회</span>
+                            <span>OT/체험 {t.ot}회</span>
+                            <span>그룹 {t.group}회</span>
+                            <span>기타 {t.other}회</span>
+                            <span>일평균 {fmtAvg(t.avgPerDay)}회</span>
                           </div>
                         </button>
                         {open && (
@@ -706,12 +734,13 @@ export default function TrainerDashboardPage() {
                               <div key={r.id} className="bg-gray-50 rounded-lg px-3 py-2 text-xs space-y-0.5">
                                 <div className="flex items-center justify-between">
                                   <span className="font-medium text-gray-700">{formatDate(r.reportDate)}</span>
-                                  <span className="font-semibold text-gray-800">{won(r.totalSales)}</span>
+                                  <span className="font-semibold text-gray-800">총 {totalOf(r)}회</span>
                                 </div>
                                 <p className="text-gray-400">{branchNameOf(r.branchId)}</p>
                                 <p className="text-gray-500">
-                                  워크인 {won(r.walkInSales)} · 개인역량 {won(r.personalSales)} · 수업 {r.classCount}회
+                                  PT {ptOf(r)} · OT/체험 {otOf(r)} · 그룹 {groupOf(r)} · 기타 {otherOf(r)}
                                 </p>
+                                {r.memo && <p className="text-gray-400 italic">{r.memo}</p>}
                               </div>
                             ))}
                           </div>
@@ -734,7 +763,7 @@ export default function TrainerDashboardPage() {
                   <table className="w-full text-sm">
                     <thead className="bg-gray-50 border-b border-gray-200">
                       <tr>
-                        {["지점", "브랜드", "워크인 매출", "개인역량 매출", "총매출", "수업 수", "트레이너 수"].map((h) => (
+                        {["지점", "브랜드", "PT 세션", "OT / 체험", "그룹수업", "기타", "총 세션", "트레이너 수"].map((h) => (
                           <th key={h} className="px-3 py-2.5 text-left text-xs font-medium text-gray-500 whitespace-nowrap">
                             {h}
                           </th>
@@ -757,19 +786,20 @@ export default function TrainerDashboardPage() {
                                 </span>
                               </td>
                               <td className="px-3 py-2.5 text-xs text-gray-500">{branchBrandOf(b.branchId)}</td>
-                              <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{won(b.walkInSales)}</td>
-                              <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{won(b.personalSales)}</td>
-                              <td className="px-3 py-2.5 font-semibold text-gray-900 whitespace-nowrap">{won(b.totalSales)}</td>
-                              <td className="px-3 py-2.5 text-gray-700">{b.classCount}회</td>
+                              <td className="px-3 py-2.5 text-gray-700">{b.pt}회</td>
+                              <td className="px-3 py-2.5 text-gray-700">{b.ot}회</td>
+                              <td className="px-3 py-2.5 text-gray-700">{b.group}회</td>
+                              <td className="px-3 py-2.5 text-gray-700">{b.other}회</td>
+                              <td className="px-3 py-2.5 font-semibold text-gray-900">{b.total}회</td>
                               <td className="px-3 py-2.5 text-gray-700">{b.trainerCount}명</td>
                             </tr>
                             {open && (
                               <tr>
-                                <td colSpan={7} className="px-4 py-3 bg-gray-50/70">
+                                <td colSpan={8} className="px-4 py-3 bg-gray-50/70">
                                   <table className="w-full text-xs">
                                     <thead>
                                       <tr className="text-gray-400">
-                                        {["트레이너", "워크인 매출", "개인역량 매출", "총매출", "수업 수", "수업당 매출"].map((h) => (
+                                        {["트레이너", "PT 세션", "OT / 체험", "그룹수업", "기타", "총 세션"].map((h) => (
                                           <th key={h} className="px-2 py-1.5 text-left font-medium">{h}</th>
                                         ))}
                                       </tr>
@@ -778,11 +808,11 @@ export default function TrainerDashboardPage() {
                                       {branchTrainerAggs.map((t) => (
                                         <tr key={t.trainerId}>
                                           <td className="px-2 py-1.5 font-medium text-gray-700">{t.trainerName}</td>
-                                          <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">{won(t.walkInSales)}</td>
-                                          <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">{won(t.personalSales)}</td>
-                                          <td className="px-2 py-1.5 font-medium text-gray-800 whitespace-nowrap">{won(t.totalSales)}</td>
-                                          <td className="px-2 py-1.5 text-gray-600">{t.classCount}회</td>
-                                          <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">{fmtPerClass(salesPerClassOf(t.totalSales, t.classCount))}</td>
+                                          <td className="px-2 py-1.5 text-gray-600">{t.pt}회</td>
+                                          <td className="px-2 py-1.5 text-gray-600">{t.ot}회</td>
+                                          <td className="px-2 py-1.5 text-gray-600">{t.group}회</td>
+                                          <td className="px-2 py-1.5 text-gray-600">{t.other}회</td>
+                                          <td className="px-2 py-1.5 font-medium text-gray-800">{t.total}회</td>
                                         </tr>
                                       ))}
                                     </tbody>
@@ -797,10 +827,11 @@ export default function TrainerDashboardPage() {
                     <tfoot className="bg-gray-50 border-t border-gray-200">
                       <tr className="text-xs font-semibold text-gray-700">
                         <td className="px-3 py-2.5" colSpan={2}>합계</td>
-                        <td className="px-3 py-2.5 whitespace-nowrap">{won(summary.walkIn)}</td>
-                        <td className="px-3 py-2.5 whitespace-nowrap">{won(summary.personal)}</td>
-                        <td className="px-3 py-2.5 whitespace-nowrap">{won(summary.total)}</td>
-                        <td className="px-3 py-2.5">{summary.classes}회</td>
+                        <td className="px-3 py-2.5">{summary.pt}회</td>
+                        <td className="px-3 py-2.5">{summary.ot}회</td>
+                        <td className="px-3 py-2.5">{summary.group}회</td>
+                        <td className="px-3 py-2.5">{summary.other}회</td>
+                        <td className="px-3 py-2.5">{summary.total}회</td>
                         <td className="px-3 py-2.5">-</td>
                       </tr>
                     </tfoot>
@@ -822,12 +853,13 @@ export default function TrainerDashboardPage() {
                               {branchNameOf(b.branchId)}
                               <span className="ml-1.5 text-xs font-normal text-gray-400">{branchBrandOf(b.branchId)}</span>
                             </span>
-                            <span className="text-sm font-bold text-[#1e3a5f]">{won(b.totalSales)}</span>
+                            <span className="text-sm font-bold text-[#1e3a5f]">총 {b.total}회</span>
                           </div>
                           <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-500">
-                            <span>워크인 {won(b.walkInSales)}</span>
-                            <span>개인역량 {won(b.personalSales)}</span>
-                            <span>수업 {b.classCount}회</span>
+                            <span>PT {b.pt}회</span>
+                            <span>OT/체험 {b.ot}회</span>
+                            <span>그룹 {b.group}회</span>
+                            <span>기타 {b.other}회</span>
                             <span>트레이너 {b.trainerCount}명</span>
                           </div>
                         </button>
@@ -837,10 +869,10 @@ export default function TrainerDashboardPage() {
                               <div key={t.trainerId} className="bg-gray-50 rounded-lg px-3 py-2 text-xs space-y-0.5">
                                 <div className="flex items-center justify-between">
                                   <span className="font-medium text-gray-700">{t.trainerName}</span>
-                                  <span className="font-semibold text-gray-800">{won(t.totalSales)}</span>
+                                  <span className="font-semibold text-gray-800">총 {t.total}회</span>
                                 </div>
                                 <p className="text-gray-500">
-                                  워크인 {won(t.walkInSales)} · 개인역량 {won(t.personalSales)} · 수업 {t.classCount}회
+                                  PT {t.pt} · OT/체험 {t.ot} · 그룹 {t.group} · 기타 {t.other}
                                 </p>
                               </div>
                             ))}

@@ -13,11 +13,7 @@ import type { TrainerDailyReport } from "@/types";
 
 // ── Validation ────────────────────────────────────────────────────────────────
 
-function sanitizeMoney(v: number | undefined | null): number {
-  if (v === undefined || v === null || isNaN(v) || !isFinite(v)) return 0;
-  return Math.max(0, Math.round(v));
-}
-
+// 빈 값 → 0, 음수 금지, 소수점 금지 (정수만), NaN/Infinity 금지
 function sanitizeCount(v: number | undefined | null): number {
   if (v === undefined || v === null || isNaN(v) || !isFinite(v)) return 0;
   return Math.max(0, Math.floor(v));
@@ -40,9 +36,11 @@ export type UpsertTrainerDailyReportInput = {
   reportDate: string;
   trainerId: string;
   trainerName: string;
-  walkInSales?: number | null;
-  personalSales?: number | null;
-  classCount?: number | null;
+  ptSessionCount?: number | null;
+  otSessionCount?: number | null;
+  groupSessionCount?: number | null;
+  otherSessionCount?: number | null;
+  memo?: string;
   writerUid: string;
   isTestData?: boolean;
 };
@@ -50,35 +48,41 @@ export type UpsertTrainerDailyReportInput = {
 export async function upsertTrainerDailyReport(
   input: UpsertTrainerDailyReportInput
 ): Promise<string> {
-  const walkInSales = sanitizeMoney(input.walkInSales);
-  const personalSales = sanitizeMoney(input.personalSales);
-  const totalSales = walkInSales + personalSales;
-  const classCount = sanitizeCount(input.classCount);
+  const ptSessionCount = sanitizeCount(input.ptSessionCount);
+  const otSessionCount = sanitizeCount(input.otSessionCount);
+  const groupSessionCount = sanitizeCount(input.groupSessionCount);
+  const otherSessionCount = sanitizeCount(input.otherSessionCount);
+  const totalSessionCount =
+    ptSessionCount + otSessionCount + groupSessionCount + otherSessionCount;
 
   const id = trainerDailyReportId(input.branchId, input.reportDate, input.trainerId);
   const now = Timestamp.now();
 
-  const data: Omit<TrainerDailyReport, "createdAt"> & { createdAt: Timestamp } = {
+  // undefined는 Firestore에 저장하지 않는다 — memo는 값이 있을 때만 포함
+  const memo = input.memo?.trim();
+
+  const data: Record<string, unknown> = {
     id,
     branchId: input.branchId,
     reportDate: input.reportDate,
     trainerId: input.trainerId,
     trainerName: input.trainerName,
-    walkInSales,
-    personalSales,
-    totalSales,
-    classCount,
+    ptSessionCount,
+    otSessionCount,
+    groupSessionCount,
+    otherSessionCount,
+    totalSessionCount,
+    memo: memo || "",
     writerUid: input.writerUid,
     createdAt: now,
     updatedAt: now,
   };
 
   if (input.isTestData !== undefined) {
-    (data as TrainerDailyReport).isTestData = input.isTestData;
+    data.isTestData = input.isTestData;
   }
 
-  // setDoc with merge:false is idempotent for the same ID — safe upsert pattern.
-  // createdAt gets overwritten here on update, but we use merge to preserve it.
+  // merge:true — 같은 ID 재저장 시 업데이트 (중복 문서 생성 없음)
   await setDoc(doc(db, "trainerDailyReports", id), data, { merge: true });
 
   return id;

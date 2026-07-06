@@ -198,14 +198,26 @@ export interface TrainerDailyReport {
   reportDate: string; // YYYY-MM-DD
   trainerId: string;
   trainerName: string;
-  walkInSales: number;
-  personalSales: number;
-  totalSales: number;
-  classCount: number;
+
+  // 수업 세션 수 (금액 관리는 하지 않음)
+  ptSessionCount: number;
+  otSessionCount: number;
+  groupSessionCount: number;
+  otherSessionCount: number;
+  totalSessionCount: number; // 자동 계산 (pt + ot + group + other)
+
+  memo?: string;
+
   writerUid: string;
   isTestData?: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+
+  // Legacy 금액 필드 — 과거 저장 문서와의 호환용. 신규 입력·표시에 사용 금지.
+  walkInSales?: number;
+  personalSales?: number;
+  totalSales?: number;
+  classCount?: number;
 }
 
 // ─── Manager Invite ──────────────────────────────────────────────────────────
