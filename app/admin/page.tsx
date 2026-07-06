@@ -9,6 +9,7 @@ import { getAllCampaigns } from "@/services/campaigns";
 import KpiCard from "@/components/dashboard/KpiCard";
 import SubmissionDonut from "@/components/dashboard/SubmissionDonut";
 import ConversionFunnel from "@/components/dashboard/ConversionFunnel";
+import TrainerSessionSection from "@/components/dashboard/TrainerSessionSection";
 import LoadingState from "@/components/common/LoadingState";
 import {
   cn,
@@ -284,6 +285,9 @@ export default function AdminDashboardPage() {
           <KpiCard label="컴백회원" value={totalComeback} unit="명" />
         </div>
       </div>
+
+      {/* ── Trainer sessions ───────────────────────────────────────────────── */}
+      <TrainerSessionSection />
 
       {/* ── 7-day section ───────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm space-y-4">

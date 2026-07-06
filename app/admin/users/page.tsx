@@ -20,29 +20,20 @@ import {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const MANAGER_ASSIGNMENTS: { key: string; name: string; branches: string[] }[] = [
-  { key: "kim-jeongwon",  name: "김정원", branches: ["머팩 강남점"] },
-  { key: "jeong-sunghun", name: "정성훈", branches: ["머팩 경상대점", "팀애플 경상대점"] },
-  { key: "kang-daehwan",  name: "강대환", branches: ["머팩 고성점"] },
-  { key: "kim-danbi",     name: "김단비", branches: ["머팩 사천본점"] },
-  { key: "kim-sunghun",   name: "김승훈", branches: ["머팩 진주혁신점"] },
-  { key: "lee-juhwan",    name: "이주환", branches: ["머팩 터미널점"] },
-  { key: "lee-seokho",    name: "이석호", branches: ["머팩 하대점"] },
-  { key: "kang-gyeongho", name: "강경호", branches: ["머팩 호탄점"] },
-  { key: "kim-jihun",     name: "김지훈", branches: ["머팩 정촌점"] },
-  { key: "ha-sunghun",    name: "하성훈", branches: ["올드짐 사천점"] },
-  { key: "kim-donghwan",  name: "김동환", branches: ["올드짐 하대점"] },
-  { key: "kim-minhu",     name: "김민후", branches: ["올드짐 평거점", "어반짐"] },
-  { key: "lee-onseok",    name: "이언석", branches: ["올드짐 상동점", "올드짐 아주점"] },
-  { key: "bae-jeongjae",  name: "배정재", branches: ["올드짐 수월점"] },
-  { key: "choi-urin",     name: "최우린", branches: ["우아 아주점", "벨로바레", "어반요가"] },
-  { key: "yun-yujeong",   name: "윤유정", branches: ["우아 상동점"] },
-  { key: "kim-hayeon",    name: "김하연", branches: ["우아 죽림점", "우아 북신점"] },
-  { key: "choi-jaehyeok", name: "최재혁", branches: ["핏메드"] },
-  { key: "kang-jaewoo",   name: "강재우", branches: ["볼드짐"] },
-];
+// 운영 계정은 개인이 아니라 지점 기준으로 생성한다 (지점 1개 = 운영계정 1개).
+// 지점장이 바뀌어도 계정은 지점에 귀속되어 유지된다.
+// 계정 목록은 branches 컬렉션에서 런타임에 생성 — operationalAccounts 참조.
 
 const HQ_BRANCHES = ["머팩 벌리점", "머팩 보건대점", "머팩 신진주역점", "짐플릭스 시청점"];
+
+const EMAIL_DOMAIN = "returnlife.co.kr";
+
+type OperationalAccount = {
+  key: string;          // branch.id — managerInvites 문서 키
+  name: string;         // 지점명 (users.name으로 저장될 값)
+  branches: string[];   // 담당 지점명 (기본 1개)
+  defaultEmail: string; // {branchId}@returnlife.co.kr
+};
 
 const STATUS_LABEL: Record<ManagerInviteStatus, string> = {
   email_required:  "이메일 필요",
@@ -118,6 +109,20 @@ export default function AdminUsersPage() {
     return map;
   }, [branches]);
 
+  // 지점 1개 = 운영계정 1개. HQ 직접 관리 지점은 별도 계정을 만들지 않는다.
+  const operationalAccounts = useMemo<OperationalAccount[]>(
+    () =>
+      branches
+        .filter((b) => !HQ_BRANCHES.includes(b.name))
+        .map((b) => ({
+          key: b.id,
+          name: b.name,
+          branches: [b.name],
+          defaultEmail: `${b.id}@${EMAIL_DOMAIN}`,
+        })),
+    [branches]
+  );
+
   const emailToUser = useMemo(() => {
     const map: Record<string, UserProfile> = {};
     users.forEach((u) => { if (u.email) map[u.email] = u; });
@@ -177,8 +182,8 @@ export default function AdminUsersPage() {
   // ── CSV ────────────────────────────────────────────────────────────────────
 
   function downloadCSV() {
-    const rows: string[][] = [["담당자명", "이메일", "담당지점"]];
-    MANAGER_ASSIGNMENTS.forEach(({ key, name, branches: bNames }) => {
+    const rows: string[][] = [["지점명", "이메일", "담당지점"]];
+    operationalAccounts.forEach(({ key, name, branches: bNames }) => {
       rows.push([name, invites[key]?.email ?? "", bNames.join(",")]);
     });
     const csv = rows.map((r) => r.map((c) => `"${c}"`).join(",")).join("\n");
@@ -205,7 +210,7 @@ export default function AdminUsersPage() {
       const [csvName, csvEmail] = parts;
       if (!csvName) continue;
 
-      const assignment = MANAGER_ASSIGNMENTS.find((m) => m.name === csvName);
+      const assignment = operationalAccounts.find((m) => m.name === csvName);
       if (!assignment) continue;
 
       const email = csvEmail ?? "";
@@ -234,7 +239,7 @@ export default function AdminUsersPage() {
 
   const stats = useMemo(() => {
     let withEmail = 0, withoutEmail = 0, existingAccount = 0;
-    MANAGER_ASSIGNMENTS.forEach(({ key }) => {
+    operationalAccounts.forEach(({ key }) => {
       const email = invites[key]?.email?.trim() ?? "";
       if (email) {
         withEmail++;
@@ -244,19 +249,19 @@ export default function AdminUsersPage() {
       }
     });
     return {
-      total: MANAGER_ASSIGNMENTS.length,
+      total: operationalAccounts.length,
       withEmail,
       withoutEmail,
       existingAccount,
       newAccount: withEmail - existingAccount,
     };
-  }, [invites, emailToUser]);
+  }, [operationalAccounts, invites, emailToUser]);
 
   const preview = useMemo(() => {
     let branchConnections = 0;
     const errorDetails: string[] = [];
 
-    MANAGER_ASSIGNMENTS.forEach(({ key, name, branches: bNames }) => {
+    operationalAccounts.forEach(({ key, name, branches: bNames }) => {
       const email = invites[key]?.email?.trim() ?? "";
       bNames.forEach((n) => {
         if (!branchNameToId[n]) {
@@ -268,7 +273,35 @@ export default function AdminUsersPage() {
     });
 
     return { ...stats, branchConnections, errors: errorDetails.length, errorDetails };
-  }, [stats, invites, emailToUser, branchNameToId]);
+  }, [stats, operationalAccounts, invites, emailToUser, branchNameToId]);
+
+  // 이메일이 비어 있는 운영계정에 {branchId}@returnlife.co.kr 기본 이메일을 일괄 적용
+  const [bulkApplying, setBulkApplying] = useState(false);
+
+  async function applyDefaultEmails() {
+    setBulkApplying(true);
+    try {
+      for (const acc of operationalAccounts) {
+        const current = invites[acc.key]?.email?.trim() ?? "";
+        if (current) continue;
+        const email = acc.defaultEmail;
+        if (emailToUser[email]) continue; // 기존 계정과 충돌하면 건너뜀
+        const status = deriveStatus(email, undefined);
+        await upsertManagerInvite(acc.key, {
+          name: acc.name,
+          email,
+          branchIds: [acc.key],
+          status,
+        });
+        setInvites((prev) => ({
+          ...prev,
+          [acc.key]: { ...prev[acc.key], name: acc.name, email, branchIds: [acc.key], status },
+        }));
+      }
+    } finally {
+      setBulkApplying(false);
+    }
+  }
 
   // ── Existing user edit ─────────────────────────────────────────────────────
 
@@ -317,7 +350,7 @@ export default function AdminUsersPage() {
       {/* Tabs */}
       <div className="flex border-b border-gray-200">
         <TabButton
-          label={`담당자 계정 준비 (${MANAGER_ASSIGNMENTS.length})`}
+          label={`지점 운영계정 준비 (${operationalAccounts.length})`}
           active={tab === "preparation"}
           onClick={() => setTab("preparation")}
         />
@@ -333,7 +366,7 @@ export default function AdminUsersPage() {
         <div className="space-y-4">
           {/* Stats */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatCard label="전체 담당자" value={stats.total} colorClass="text-blue-600" />
+            <StatCard label="전체 운영계정" value={stats.total} colorClass="text-blue-600" />
             <StatCard label="이메일 입력 완료" value={stats.withEmail} colorClass="text-green-600" />
             <StatCard label="이메일 누락" value={stats.withoutEmail} colorClass="text-yellow-600" />
             <StatCard label="기존 계정" value={stats.existingAccount} colorClass="text-purple-600" />
@@ -341,6 +374,14 @@ export default function AdminUsersPage() {
 
           {/* Action buttons */}
           <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={applyDefaultEmails}
+              disabled={bulkApplying}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs border border-[#1e3a5f] text-[#1e3a5f] rounded-lg hover:bg-[#1e3a5f]/5 disabled:opacity-50"
+            >
+              <CheckCircleIcon className="w-3.5 h-3.5" />
+              {bulkApplying ? "적용 중..." : "기본 이메일 일괄 적용"}
+            </button>
             <button
               onClick={downloadCSV}
               className="flex items-center gap-1.5 px-3 py-2 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700"
@@ -373,7 +414,7 @@ export default function AdminUsersPage() {
             <table className="w-full text-sm min-w-[720px]">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  {["담당자명", "이메일", "상태", "담당 지점", "계정 연결", ""].map((h) => (
+                  {["운영 계정 (지점명)", "이메일", "상태", "담당 지점", "계정 연결", ""].map((h) => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500">
                       {h}
                     </th>
@@ -381,7 +422,7 @@ export default function AdminUsersPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {MANAGER_ASSIGNMENTS.map(({ key, name, branches: bNames }) => {
+                {operationalAccounts.map(({ key, name, branches: bNames }) => {
                   const invite = invites[key];
                   const email = invite?.email ?? "";
                   const isEditing = editingKey === key;
@@ -527,6 +568,10 @@ export default function AdminUsersPage() {
             <p className="text-xs text-blue-600 mt-2">
               위 지점은 admin 계정에서 직접 보고 관리를 수행합니다.
             </p>
+            <p className="text-xs text-blue-600 mt-1">
+              비밀번호는 코드·Firestore에 저장하지 않습니다. Firebase Auth 계정 생성 후
+              비밀번호 재설정 메일을 발송하는 방식으로 운영합니다.
+            </p>
           </div>
         </div>
       )}
@@ -624,7 +669,7 @@ export default function AdminUsersPage() {
             </div>
 
             <div className="divide-y divide-gray-100">
-              <PreviewRow label="전체 담당자 수" value={`${preview.total}명`} />
+              <PreviewRow label="전체 운영계정 수" value={`${preview.total}개`} />
               <PreviewRow
                 label="이메일 입력 완료"
                 value={`${preview.withEmail}명`}

@@ -7,6 +7,8 @@ import { getAllBranches } from "@/services/branches";
 import { getAllCampaigns, getCampaignResultsByDateRange } from "@/services/campaigns";
 import { getAllIssues } from "@/services/issues";
 import { getAllReports } from "@/services/reports";
+import { getAllTrainerDailyReportsByPeriod } from "@/services/trainerDailyReports";
+import { getAllTrainers } from "@/services/trainers";
 import { getAllUsers } from "@/services/users";
 import { calcPtConversionRate, formatDate, todayYMD, getExpiringTmTotal, getUnregisteredTmTotal, getOfflinePromoTotal } from "@/lib/utils";
 import type { Worksheet } from "exceljs";
@@ -17,6 +19,7 @@ import type {
   DailyReport,
   Issue,
   ReportStatus,
+  TrainerDailyReport,
   UserProfile,
 } from "@/types";
 
@@ -90,6 +93,33 @@ const campaignResultColumns = [
   { header: "지표", key: "metricLabel", width: 20 },
   { header: "값", key: "metricValue", width: 12 },
   { header: "수정 시간", key: "updatedAt", width: 22 },
+];
+
+// 트레이너 세션 시트 — 금액 컬럼은 절대 포함하지 않는다
+const trainerMonthlyColumns = [
+  { header: "기간", key: "period", width: 24 },
+  { header: "브랜드", key: "brand", width: 16 },
+  { header: "지점", key: "branchName", width: 22 },
+  { header: "트레이너", key: "trainerName", width: 16 },
+  { header: "PT 세션", key: "pt", width: 10 },
+  { header: "OT / 체험 세션", key: "ot", width: 14 },
+  { header: "그룹수업 세션", key: "group", width: 14 },
+  { header: "기타 세션", key: "other", width: 10 },
+  { header: "총 세션", key: "total", width: 10 },
+  { header: "일 평균 세션", key: "avgPerDay", width: 12 },
+];
+
+const trainerDailyColumns = [
+  { header: "날짜", key: "date", width: 14 },
+  { header: "브랜드", key: "brand", width: 16 },
+  { header: "지점", key: "branchName", width: 22 },
+  { header: "트레이너", key: "trainerName", width: 16 },
+  { header: "PT 세션", key: "pt", width: 10 },
+  { header: "OT / 체험 세션", key: "ot", width: 14 },
+  { header: "그룹수업 세션", key: "group", width: 14 },
+  { header: "기타 세션", key: "other", width: 10 },
+  { header: "총 세션", key: "total", width: 10 },
+  { header: "메모", key: "memo", width: 28 },
 ];
 
 const issueTypeLabel: Record<Issue["type"], string> = {
@@ -202,13 +232,15 @@ export default function AdminExportPage() {
         return;
       }
 
-      const [reports, bs, users, issues, campaigns, campaignResults] = await Promise.all([
+      const [reports, bs, users, issues, campaigns, campaignResults, trainerReports, trainers] = await Promise.all([
         getAllReports(fromDate, toDate),
         getAllBranches(),
         getAllUsers(),
         getAllIssues({ fromDate, toDate }),
         getAllCampaigns(),
         getCampaignResultsByDateRange(fromDate, toDate),
+        getAllTrainerDailyReportsByPeriod(fromDate, toDate),
+        getAllTrainers(),
       ]);
 
       const branchMap = Object.fromEntries(bs.map((branch) => [branch.id, branch]));
@@ -241,12 +273,34 @@ export default function AdminExportPage() {
         return true;
       });
 
+      // 트레이너 세션: 테스트 제외 + submitted/locked 보고 연결분만 운영 집계
+      // (branchMap은 활성 지점만 담고 있으므로 삭제/비활성 지점도 자동 제외)
+      const trainerNameMap = Object.fromEntries(trainers.map((t) => [t.id, t.name]));
+      const validReportKeys = new Set(
+        reports
+          .filter(
+            (r) => !r.isTestData && (r.status === "submitted" || r.status === "locked")
+          )
+          .map((r) => `${r.branchId}_${r.reportDate}`)
+      );
+      const filteredTrainerReports = trainerReports.filter((r) => {
+        if (r.isTestData === true) return false;
+        if (!validReportKeys.has(`${r.branchId}_${r.reportDate}`)) return false;
+        const branch = branchMap[r.branchId];
+        if (!branch) return false;
+        if (selectedBranch && r.branchId !== selectedBranch) return false;
+        if (selectedBrand && branch.brand !== selectedBrand) return false;
+        if (selectedRegion && branch.region !== selectedRegion) return false;
+        return true;
+      });
+
       if (
         filtered.length === 0 &&
         filteredIssues.length === 0 &&
-        filteredCampaignResults.length === 0
+        filteredCampaignResults.length === 0 &&
+        filteredTrainerReports.length === 0
       ) {
-        setError("선택한 조건에 해당하는 보고, 이슈, 캠페인 실적 데이터가 없습니다.");
+        setError("선택한 조건에 해당하는 보고, 이슈, 캠페인, 트레이너 세션 데이터가 없습니다.");
         return;
       }
 
@@ -359,6 +413,94 @@ export default function AdminExportPage() {
         });
 
         styleWorksheet(campaignSheet);
+      }
+
+      if (filteredTrainerReports.length > 0) {
+        const pt = (r: TrainerDailyReport) => r.ptSessionCount ?? 0;
+        const ot = (r: TrainerDailyReport) => r.otSessionCount ?? 0;
+        const grp = (r: TrainerDailyReport) => r.groupSessionCount ?? 0;
+        const oth = (r: TrainerDailyReport) => r.otherSessionCount ?? 0;
+        const tot = (r: TrainerDailyReport) => r.totalSessionCount ?? 0;
+
+        // 시트 1: 트레이너 세션 월 누적 (지점 × 트레이너 기준, 기간 내 합산)
+        const monthlySheet = workbook.addWorksheet("트레이너 세션 월 누적");
+        monthlySheet.columns = trainerMonthlyColumns;
+        monthlySheet.views = [{ state: "frozen", ySplit: 1 }];
+
+        const aggMap = new Map<string, {
+          branchId: string; trainerId: string; trainerName: string;
+          pt: number; ot: number; group: number; other: number; total: number;
+          days: Set<string>;
+        }>();
+        filteredTrainerReports.forEach((r) => {
+          const key = `${r.branchId}_${r.trainerId}`;
+          let agg = aggMap.get(key);
+          if (!agg) {
+            agg = {
+              branchId: r.branchId,
+              trainerId: r.trainerId,
+              trainerName: trainerNameMap[r.trainerId] ?? r.trainerName,
+              pt: 0, ot: 0, group: 0, other: 0, total: 0,
+              days: new Set(),
+            };
+            aggMap.set(key, agg);
+          }
+          agg.pt += pt(r);
+          agg.ot += ot(r);
+          agg.group += grp(r);
+          agg.other += oth(r);
+          agg.total += tot(r);
+          agg.days.add(r.reportDate);
+        });
+
+        Array.from(aggMap.values())
+          .sort((a, b) => b.total - a.total)
+          .forEach((agg) => {
+            const branch = branchMap[agg.branchId];
+            monthlySheet.addRow({
+              period: `${fromDate} ~ ${toDate}`,
+              brand: branch?.brand ?? "",
+              branchName: branch?.name ?? agg.branchId,
+              trainerName: agg.trainerName,
+              pt: agg.pt,
+              ot: agg.ot,
+              group: agg.group,
+              other: agg.other,
+              total: agg.total,
+              avgPerDay: agg.days.size > 0 ? Number((agg.total / agg.days.size).toFixed(1)) : "",
+            });
+          });
+
+        styleWorksheet(monthlySheet);
+
+        // 시트 2: 트레이너 세션 일별 상세
+        const dailySheet = workbook.addWorksheet("트레이너 세션 일별 상세");
+        dailySheet.columns = trainerDailyColumns;
+        dailySheet.views = [{ state: "frozen", ySplit: 1 }];
+
+        [...filteredTrainerReports]
+          .sort((a, b) =>
+            a.reportDate !== b.reportDate
+              ? a.reportDate.localeCompare(b.reportDate)
+              : a.branchId.localeCompare(b.branchId)
+          )
+          .forEach((r) => {
+            const branch = branchMap[r.branchId];
+            dailySheet.addRow({
+              date: formatDate(r.reportDate),
+              brand: branch?.brand ?? "",
+              branchName: branch?.name ?? r.branchId,
+              trainerName: trainerNameMap[r.trainerId] ?? r.trainerName,
+              pt: pt(r),
+              ot: ot(r),
+              group: grp(r),
+              other: oth(r),
+              total: tot(r),
+              memo: r.memo ?? "",
+            });
+          });
+
+        styleWorksheet(dailySheet);
       }
 
       const buffer = await workbook.xlsx.writeBuffer();

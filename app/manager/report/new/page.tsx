@@ -82,6 +82,7 @@ export default function NewReportPage() {
   const [submitError, setSubmitError] = useState("");
   const [branchTrainers, setBranchTrainers] = useState<Trainer[]>([]);
   const [trainerPerfs, setTrainerPerfs] = useState<TrainerPerfState[]>([]);
+  const [actualWriterName, setActualWriterName] = useState("");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const searchParams = useSearchParams();
@@ -147,6 +148,7 @@ export default function NewReportPage() {
     setUtPhone(0); setUtSms(0); setUtKakao(0); setUtOther(0);
     setOpFlyer(0); setOpPlacard(0); setOpBanner(0); setOpPartnership(0); setOpEvent(0); setOpOther(0);
     setPromotionMemo("");
+    setActualWriterName("");
     setIssues([defaultIssue("claim"), defaultIssue("staff"), defaultIssue("facility")]);
     setCampaignResults({});
     setLastSaved(null);
@@ -184,6 +186,7 @@ export default function NewReportPage() {
       setOpFlyer(0); setOpPlacard(0); setOpBanner(0); setOpPartnership(0); setOpEvent(0); setOpOther(0);
     }
     setPromotionMemo(report.promotionMemo ?? "");
+    setActualWriterName(report.actualWriterName ?? "");
   }, []);
 
   function updateTrainerPerf(trainerId: string, patch: Partial<TrainerPerfState>) {
@@ -327,7 +330,8 @@ export default function NewReportPage() {
     offlinePromotion: { flyer: opFlyer, placard: opPlacard, banner: opBanner, partnership: opPartnership, event: opEvent, other: opOther },
     offlinePromotionTotal: opFlyer + opPlacard + opBanner + opPartnership + opEvent + opOther,
     ...(promotionMemo ? { promotionMemo } : {}),
-  }), [activeMembers, inquiries, ptConsultations, ptRegistrations, reRegistrations, comebackMembers, happyCalls, newHappyCalls, existingHappyCalls, etPhone, etSms, etKakao, etOther, utPhone, utSms, utKakao, utOther, opFlyer, opPlacard, opBanner, opPartnership, opEvent, opOther, promotionMemo]);
+    ...(actualWriterName.trim() ? { actualWriterName: actualWriterName.trim() } : {}),
+  }), [activeMembers, inquiries, ptConsultations, ptRegistrations, reRegistrations, comebackMembers, happyCalls, newHappyCalls, existingHappyCalls, etPhone, etSms, etKakao, etOther, utPhone, utSms, utKakao, utOther, opFlyer, opPlacard, opBanner, opPartnership, opEvent, opOther, promotionMemo, actualWriterName]);
 
   const hasAnyReportInput = useCallback(() => {
     return [activeMembers, inquiries, ptConsultations, ptRegistrations, reRegistrations, comebackMembers, happyCalls, newHappyCalls, existingHappyCalls]
@@ -570,6 +574,18 @@ export default function NewReportPage() {
       {step === 1 && (
         <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-4">
           <h2 className="font-semibold text-gray-800">1. 영업 지표</h2>
+
+          <div>
+            <label className="text-xs font-medium text-gray-700 block mb-1">실제 작성자명 (선택)</label>
+            <input
+              type="text"
+              value={actualWriterName}
+              onChange={(e) => setActualWriterName(e.target.value)}
+              placeholder="지점 운영계정으로 작성하는 경우 실제 작성자 이름"
+              disabled={!canEditReport}
+              className="w-full max-w-xs border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-50 disabled:text-gray-400"
+            />
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <NumberInput
               label="유효회원"

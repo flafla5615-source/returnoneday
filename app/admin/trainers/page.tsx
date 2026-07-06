@@ -86,9 +86,6 @@ export default function TrainerDashboardPage() {
   // Selected-period data (test data already removed) + validity keys for draft filtering
   const [rawReports, setRawReports] = useState<TrainerDailyReport[]>([]);
   const [validKeys, setValidKeys] = useState<Set<string>>(new Set());
-  // This-month data for the fixed "오늘 총 세션 / 이번 달 누적 세션" cards
-  const [monthRawReports, setMonthRawReports] = useState<TrainerDailyReport[]>([]);
-  const [monthValidKeys, setMonthValidKeys] = useState<Set<string>>(new Set());
   const [fetchedCount, setFetchedCount] = useState(0);
   const [testExcludedCount, setTestExcludedCount] = useState(0);
 
@@ -139,40 +136,25 @@ export default function TrainerDashboardPage() {
     async function loadPeriod() {
       setPeriodLoading(true);
       try {
-        const isMonthRange = from === monthFrom && to === today;
-        const [trainerReports, dailyReports, monthTrainerReports, monthDailyReports] =
-          await Promise.all([
-            getAllTrainerDailyReportsByPeriod(from, to),
-            getAllReports(from, to),
-            isMonthRange ? null : getAllTrainerDailyReportsByPeriod(monthFrom, today),
-            isMonthRange ? null : getAllReports(monthFrom, today),
-          ]);
+        const [trainerReports, dailyReports] = await Promise.all([
+          getAllTrainerDailyReportsByPeriod(from, to),
+          getAllReports(from, to),
+        ]);
         if (cancelled) return;
 
-        const buildValidKeys = (reports: Awaited<ReturnType<typeof getAllReports>>) =>
-          new Set(
-            reports
-              .filter(
-                (r) =>
-                  !r.isTestData && (r.status === "submitted" || r.status === "locked")
-              )
-              .map(reportKey)
-          );
-
         const nonTest = trainerReports.filter((r) => !r.isTestData);
-        const keys = buildValidKeys(dailyReports);
+        const keys = new Set(
+          dailyReports
+            .filter(
+              (r) =>
+                !r.isTestData && (r.status === "submitted" || r.status === "locked")
+            )
+            .map(reportKey)
+        );
         setRawReports(nonTest);
         setValidKeys(keys);
         setFetchedCount(trainerReports.length);
         setTestExcludedCount(trainerReports.length - nonTest.length);
-
-        if (monthTrainerReports && monthDailyReports) {
-          setMonthRawReports(monthTrainerReports.filter((r) => !r.isTestData));
-          setMonthValidKeys(buildValidKeys(monthDailyReports));
-        } else {
-          setMonthRawReports(nonTest);
-          setMonthValidKeys(keys);
-        }
       } catch (err) {
         console.error("[TrainerDashboard] load failed", err);
       } finally {
@@ -184,7 +166,7 @@ export default function TrainerDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [from, to, monthFrom, today]);
+  }, [from, to]);
 
   // Branch / brand / trainer-name lookups
   const branchNameOf = useMemo(() => {
@@ -233,34 +215,39 @@ export default function TrainerDashboardPage() {
     };
   }, [branches, brandFilter, branchFilter, trainerFilter, search, trainerNameOf, branchNameOf]);
 
-  // Selected-period operational reports — tables + PT/OT/그룹/기타 cards
+  // 삭제/비활성 지점 데이터는 운영 집계에서 제외
+  const activeBranchIds = useMemo(
+    () => new Set(branches.filter((b) => b.active).map((b) => b.id)),
+    [branches]
+  );
+
+  // Selected-period operational reports — cards + all tables share this array
   const filtered = useMemo(() => {
     const base = includeDrafts
       ? rawReports
       : rawReports.filter((r) => validKeys.has(reportKey(r)));
-    return base.filter(passesFilters);
-  }, [rawReports, validKeys, includeDrafts, passesFilters]);
-
-  // This-month operational reports — 오늘/이번 달 카드 전용
-  const monthFiltered = useMemo(() => {
-    const base = includeDrafts
-      ? monthRawReports
-      : monthRawReports.filter((r) => monthValidKeys.has(reportKey(r)));
-    return base.filter(passesFilters);
-  }, [monthRawReports, monthValidKeys, includeDrafts, passesFilters]);
+    return base.filter((r) => activeBranchIds.has(r.branchId) && passesFilters(r));
+  }, [rawReports, validKeys, includeDrafts, activeBranchIds, passesFilters]);
 
   const summary = useMemo(() => sumSessions(filtered), [filtered]);
-  const monthTotal = useMemo(() => sumSessions(monthFiltered).total, [monthFiltered]);
-  const todayTotal = useMemo(
-    () => sumSessions(monthFiltered.filter((r) => r.reportDate === today)).total,
-    [monthFiltered, today]
-  );
+
+  // 일 평균 세션 = 총 세션 / 기록이 있는 날짜 수
+  const avgPerDay = useMemo(() => {
+    const days = new Set(filtered.map((r) => r.reportDate));
+    return days.size === 0 ? null : summary.total / days.size;
+  }, [filtered, summary.total]);
 
   // Verification logging (dev aid)
   useEffect(() => {
     if (loading || periodLoading) return;
     const operationalCount = rawReports.filter((r) => validKeys.has(reportKey(r))).length;
     const draftExcluded = rawReports.length - operationalCount;
+    const byBranch: Record<string, number> = {};
+    const byTrainer: Record<string, number> = {};
+    for (const r of filtered) {
+      byBranch[branchNameOf(r.branchId)] = (byBranch[branchNameOf(r.branchId)] ?? 0) + totalOf(r);
+      byTrainer[trainerNameOf(r)] = (byTrainer[trainerNameOf(r)] ?? 0) + totalOf(r);
+    }
     console.log("[TrainerDashboard] 집계 검증", {
       조회기간: `${from} ~ ${to}`,
       trainerDailyReports_조회개수: fetchedCount,
@@ -269,10 +256,10 @@ export default function TrainerDashboardPage() {
       제외_draft연결: includeDrafts ? 0 : draftExcluded,
       임시저장포함보기: includeDrafts,
       전체_총세션: summary.total,
-      오늘_총세션: todayTotal,
-      이번달_누적세션: monthTotal,
+      지점별_총세션: byBranch,
+      트레이너별_총세션: byTrainer,
     });
-  }, [loading, periodLoading, rawReports, validKeys, fetchedCount, testExcludedCount, includeDrafts, from, to, summary.total, todayTotal, monthTotal]);
+  }, [loading, periodLoading, rawReports, validKeys, fetchedCount, testExcludedCount, includeDrafts, from, to, summary.total, filtered, branchNameOf, trainerNameOf]);
 
   // Per-trainer aggregates
   const trainerAggs = useMemo(() => {
@@ -536,12 +523,12 @@ export default function TrainerDashboardPage() {
           {/* Summary cards */}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
             {[
-              { label: "오늘 총 세션", value: `${todayTotal.toLocaleString("ko-KR")}회`, highlight: true },
-              { label: "이번 달 누적 세션", value: `${monthTotal.toLocaleString("ko-KR")}회`, highlight: true },
+              { label: "총 세션", value: `${summary.total.toLocaleString("ko-KR")}회`, highlight: true },
               { label: "PT 세션", value: `${summary.pt.toLocaleString("ko-KR")}회` },
               { label: "OT / 체험 세션", value: `${summary.ot.toLocaleString("ko-KR")}회` },
               { label: "그룹수업 세션", value: `${summary.group.toLocaleString("ko-KR")}회` },
               { label: "기타 세션", value: `${summary.other.toLocaleString("ko-KR")}회` },
+              { label: "일 평균 세션", value: `${fmtAvg(avgPerDay)}회` },
             ].map((card) => (
               <div
                 key={card.label}
@@ -565,7 +552,7 @@ export default function TrainerDashboardPage() {
 
           {filtered.length === 0 ? (
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm py-14 text-center text-sm text-gray-400">
-              선택한 기간에 등록된 트레이너 실적이 없습니다.
+              선택한 기간에 등록된 트레이너 세션 실적이 없습니다.
             </div>
           ) : (
             <>

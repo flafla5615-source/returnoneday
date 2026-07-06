@@ -87,6 +87,10 @@ export interface DailyReport {
   offlinePromotionCount?: number | null;
   offlinePromotionMethods?: string[];
 
+  // 실제 입력자 추적 — 운영계정이 지점명 기준이라 개인 식별용으로 선택 입력
+  actualWriterName?: string;
+  actualWriterMemo?: string;
+
   // Data provenance
   isTestData?: boolean;
   source?: "manager-input" | "dashboard-seed" | string;
