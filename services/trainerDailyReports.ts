@@ -126,6 +126,21 @@ export async function getTrainerDailyReportsByPeriod(
     );
 }
 
+export async function getAllTrainerDailyReportsByPeriod(
+  fromDate: string,
+  toDate: string
+): Promise<TrainerDailyReport[]> {
+  const snap = await getDocs(
+    query(
+      collection(db, "trainerDailyReports"),
+      where("reportDate", ">=", fromDate),
+      where("reportDate", "<=", toDate),
+      orderBy("reportDate", "asc")
+    )
+  );
+  return snap.docs.map((d) => ({ ...d.data() } as TrainerDailyReport));
+}
+
 export async function getTrainerDailyReportsByTrainer(
   trainerId: string,
   fromDate: string,
