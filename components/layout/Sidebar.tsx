@@ -38,6 +38,7 @@ const managerNav: NavItem[] = [
   { label: "일일보고 작성", href: "/manager/report/new", icon: <ClipboardListIcon className="w-4 h-4" /> },
   { label: "보고 내역", href: "/manager/reports", icon: <FileTextIcon className="w-4 h-4" /> },
   { label: "대시보드", href: "/manager/dashboard", icon: <BarChart2Icon className="w-4 h-4" /> },
+  { label: "회원관리", href: "/manager/members", icon: <UsersIcon className="w-4 h-4" /> },
   { label: "운영 이슈", href: "/manager/issues", icon: <AlertCircleIcon className="w-4 h-4" /> },
   { label: "설정", href: "/manager/settings", icon: <SettingsIcon className="w-4 h-4" /> },
 ];
@@ -48,6 +49,7 @@ const adminNav: NavItem[] = [
   { label: "보고 관리", href: "/admin/reports", icon: <ClipboardListIcon className="w-4 h-4" /> },
   { label: "운영 이슈", href: "/admin/issues", icon: <AlertCircleIcon className="w-4 h-4" /> },
   { label: "캠페인 관리", href: "/admin/campaigns", icon: <MegaphoneIcon className="w-4 h-4" /> },
+  { label: "회원관리", href: "/admin/members", icon: <UsersIcon className="w-4 h-4" /> },
   { label: "사용자 관리", href: "/admin/users", icon: <UsersIcon className="w-4 h-4" /> },
   { label: "트레이너 실적", href: "/admin/trainers", icon: <BarChart2Icon className="w-4 h-4" />, exact: true },
   { label: "트레이너 관리", href: "/admin/trainers/manage", icon: <DumbbellIcon className="w-4 h-4" /> },

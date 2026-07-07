@@ -102,6 +102,58 @@ service cloud.firestore {
         && data.metrics is map;
     }
 
+    function validMemberData(data) {
+      return data.keys().hasOnly([
+          'id', 'branchId', 'branchName', 'name', 'phone', 'status',
+          'startDate', 'endDate', 'lastVisitDate', 'productName',
+          'managerName', 'memo', 'source', 'sourceFileName',
+          'createdAt', 'updatedAt'
+        ])
+        && data.id is string
+        && data.branchId is string
+        && data.branchName is string
+        && data.name is string
+        && data.phone is string
+        && data.status in ['active', 'expiring', 'expired', 'unregistered', 'unknown']
+        && data.source == 'bodycodi_excel'
+        && !('password' in data);
+    }
+
+    function validSatisfactionData(data) {
+      return data.keys().hasOnly([
+          'id', 'memberId', 'branchId', 'branchName', 'memberName', 'phone',
+          'responseDate', 'score', 'responseText', 'needsFollowUp',
+          'followUpStatus', 'memo', 'source', 'sourceFileName',
+          'createdAt', 'updatedAt'
+        ])
+        && data.id is string
+        && data.branchId is string
+        && data.branchName is string
+        && data.memberName is string
+        && data.phone is string
+        && data.needsFollowUp is bool
+        && data.followUpStatus in ['pending', 'in_progress', 'done']
+        && data.source == 'bodycodi_excel'
+        && !('password' in data);
+    }
+
+    function validMemberImportJobData(data) {
+      return data.keys().hasOnly([
+          'id', 'importType', 'fileName', 'uploadedByUid', 'uploadedByRole',
+          'branchId', 'branchName', 'totalRows', 'validRows', 'invalidRows',
+          'status', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string
+        && data.importType in ['members', 'satisfaction']
+        && data.fileName is string
+        && data.uploadedByUid == uid()
+        && data.uploadedByRole in ['admin', 'branch_manager']
+        && data.totalRows is int
+        && data.validRows is int
+        && data.invalidRows is int
+        && data.status in ['preview', 'imported', 'failed'];
+    }
+
     // ─── users ───────────────────────────────────────────────────────────
     match /users/{userId} {
       // Users can read their own document (any status); admins can read all
@@ -252,6 +304,46 @@ service cloud.firestore {
     // ─── managerInvites ───────────────────────────────────────────────────────
     match /managerInvites/{docId} {
       allow read, write: if isAdmin();
+    }
+
+    // ─── member CRM ───────────────────────────────────────────────────────────
+    match /members/{memberId} {
+      allow read: if isAdmin() ||
+        (isActiveManager() && resource.data.branchId in getUserData().branchIds);
+      allow create: if validMemberData(request.resource.data)
+        && (isAdmin() ||
+          (isActiveManager() && request.resource.data.branchId in getUserData().branchIds));
+      allow update: if validMemberData(request.resource.data)
+        && (isAdmin() ||
+          (isActiveManager()
+            && resource.data.branchId in getUserData().branchIds
+            && request.resource.data.branchId == resource.data.branchId));
+      allow delete: if isAdmin();
+    }
+
+    match /memberSatisfactionSurveys/{surveyId} {
+      allow read: if isAdmin() ||
+        (isActiveManager() && resource.data.branchId in getUserData().branchIds);
+      allow create: if validSatisfactionData(request.resource.data)
+        && (isAdmin() ||
+          (isActiveManager() && request.resource.data.branchId in getUserData().branchIds));
+      allow update: if validSatisfactionData(request.resource.data)
+        && (isAdmin() ||
+          (isActiveManager()
+            && resource.data.branchId in getUserData().branchIds
+            && request.resource.data.branchId == resource.data.branchId));
+      allow delete: if isAdmin();
+    }
+
+    match /memberImportJobs/{jobId} {
+      allow read: if isAdmin() ||
+        (isActiveManager() && resource.data.branchId in getUserData().branchIds);
+      allow create: if validMemberImportJobData(request.resource.data)
+        && ((isAdmin() && request.resource.data.uploadedByRole == 'admin') ||
+          (isActiveManager()
+            && request.resource.data.uploadedByRole == 'branch_manager'
+            && request.resource.data.branchId in getUserData().branchIds));
+      allow update, delete: if isAdmin();
     }
 
     // ─── auditLogs ────────────────────────────────────────────────────────

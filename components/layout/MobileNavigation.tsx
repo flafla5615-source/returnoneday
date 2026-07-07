@@ -20,12 +20,14 @@ const managerMobileNav = [
   { label: "홈", href: "/manager", icon: HomeIcon, exact: true },
   { label: "보고작성", href: "/manager/report/new", icon: ClipboardListIcon },
   { label: "대시보드", href: "/manager/dashboard", icon: BarChart2Icon },
+  { label: "회원", href: "/manager/members", icon: UsersIcon },
   { label: "이슈", href: "/manager/issues", icon: AlertCircleIcon },
 ];
 
 const adminMobileNav = [
   { label: "현황", href: "/admin", icon: HomeIcon, exact: true },
   { label: "보고", href: "/admin/reports", icon: ClipboardListIcon },
+  { label: "회원", href: "/admin/members", icon: UsersIcon },
   { label: "이슈", href: "/admin/issues", icon: AlertCircleIcon },
   { label: "사용자", href: "/admin/users", icon: UsersIcon },
 ];

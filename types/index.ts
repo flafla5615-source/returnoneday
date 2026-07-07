@@ -242,3 +242,73 @@ export interface ManagerInvite {
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 }
+
+// ─── Member CRM ──────────────────────────────────────────────────────────────
+
+export type MemberStatus =
+  | "active"
+  | "expiring"
+  | "expired"
+  | "unregistered"
+  | "unknown";
+
+export type MemberImportType = "members" | "satisfaction";
+
+export interface Member {
+  id: string;
+  branchId: string;
+  branchName: string;
+  name: string;
+  phone: string;
+  status: MemberStatus;
+  startDate?: string;
+  endDate?: string;
+  lastVisitDate?: string;
+  productName?: string;
+  managerName?: string;
+  memo?: string;
+  source: "bodycodi_excel";
+  sourceFileName?: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export type MemberSatisfactionFollowUpStatus =
+  | "pending"
+  | "in_progress"
+  | "done";
+
+export interface MemberSatisfactionSurvey {
+  id: string;
+  memberId?: string;
+  branchId: string;
+  branchName: string;
+  memberName: string;
+  phone: string;
+  responseDate?: string;
+  score?: number;
+  responseText?: string;
+  needsFollowUp: boolean;
+  followUpStatus: MemberSatisfactionFollowUpStatus;
+  memo?: string;
+  source: "bodycodi_excel";
+  sourceFileName?: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export interface MemberImportJob {
+  id: string;
+  importType: MemberImportType;
+  fileName: string;
+  uploadedByUid: string;
+  uploadedByRole: UserRole;
+  branchId?: string;
+  branchName?: string;
+  totalRows: number;
+  validRows: number;
+  invalidRows: number;
+  status: "preview" | "imported" | "failed";
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
