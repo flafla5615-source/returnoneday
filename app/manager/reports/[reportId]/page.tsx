@@ -8,6 +8,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { getReportById, getReportComments, reopenAbnormalSubmittedReport } from "@/services/reports";
 import { getBranchesByIds } from "@/services/branches";
 import { ReportStatusBadge } from "@/components/common/StatusBadge";
+import PrintButton from "@/components/print/PrintButton";
+import PrintHeader from "@/components/print/PrintHeader";
 import LoadingState from "@/components/common/LoadingState";
 import EmptyState from "@/components/common/EmptyState";
 import { formatDate, formatDateTime, formatPercent, calcPtConversionRate, getExpiringTmTotal, getUnregisteredTmTotal, getOfflinePromoTotal, isAbnormalSubmittedReport } from "@/lib/utils";
@@ -98,14 +100,20 @@ export default function ReportDetailPage() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-4">
+      <PrintHeader
+        title="지점장 일일보고"
+        subtitle={`${branchName || ""} / ${report.reportDate}`}
+      />
+
       <div className="flex items-center gap-3">
-        <Link href="/manager/reports" className="p-1.5 rounded-lg hover:bg-gray-100">
+        <Link href="/manager/reports" className="p-1.5 rounded-lg hover:bg-gray-100 no-print">
           <ChevronLeftIcon className="w-5 h-5 text-gray-600" />
         </Link>
         <div className="flex-1">
           <h1 className="text-base font-bold text-gray-900">{formatDate(report.reportDate)} 보고서</h1>
           {branchName && <p className="text-xs text-gray-400">{branchName}</p>}
         </div>
+        <PrintButton />
         <ReportStatusBadge status={report.status} />
       </div>
 

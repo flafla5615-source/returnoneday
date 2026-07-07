@@ -11,6 +11,8 @@ import { getAllIssues } from "@/services/issues";
 import KpiCard from "@/components/dashboard/KpiCard";
 import TrendChart from "@/components/dashboard/TrendChart";
 import { ReportStatusBadge } from "@/components/common/StatusBadge";
+import PrintButton from "@/components/print/PrintButton";
+import PrintHeader from "@/components/print/PrintHeader";
 import LoadingState from "@/components/common/LoadingState";
 import {
   todayYMD,
@@ -164,14 +166,20 @@ export default function ManagerHomePage() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-5">
+      <PrintHeader
+        title="지점장 일일보고"
+        subtitle={`${selectedBranch?.name ?? ""} / ${today}`}
+      />
+
       {/* Top bar */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
           <p className="text-lg font-bold text-gray-900">
             {profile?.name ?? "사용자"}님, 오늘도 화이팅입니다!
           </p>
           <p className="text-xs text-gray-400">{formatDate(today)} 기준</p>
         </div>
+        <PrintButton />
         {branches.length > 1 && (
           <select
             value={selectedBranchId}

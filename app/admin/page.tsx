@@ -10,6 +10,9 @@ import KpiCard from "@/components/dashboard/KpiCard";
 import SubmissionDonut from "@/components/dashboard/SubmissionDonut";
 import ConversionFunnel from "@/components/dashboard/ConversionFunnel";
 import TrainerSessionSection from "@/components/dashboard/TrainerSessionSection";
+import PrintButton from "@/components/print/PrintButton";
+import PrintHeader from "@/components/print/PrintHeader";
+import PrintableSection from "@/components/print/PrintableSection";
 import LoadingState from "@/components/common/LoadingState";
 import {
   cn,
@@ -52,6 +55,16 @@ type BranchAggregate = {
   promoTotal: number;
 };
 
+// ── Print sections ────────────────────────────────────────────────────────────
+
+const PRINT_SECTIONS = [
+  { key: "today", label: "오늘 전체 지표" },
+  { key: "trainer", label: "트레이너 세션 실적" },
+  { key: "week7", label: "최근 7일 실적" },
+  { key: "issues", label: "운영 이슈" },
+  { key: "campaigns", label: "캠페인 실적" },
+];
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function AdminDashboardPage() {
@@ -66,6 +79,11 @@ export default function AdminDashboardPage() {
   // Drilldown state
   const [selectedDetail, setSelectedDetail] = useState<DetailType>(null);
   const [tmHighlight, setTmHighlight] = useState<TmHighlight>(null);
+
+  // Print: /admin 기본값은 전체 선택 ON
+  const [printSections, setPrintSections] = useState<string[]>(
+    PRINT_SECTIONS.map((s) => s.key)
+  );
 
   const today = todayYMD();
   const from7 = format(subDays(new Date(today), 6), "yyyy-MM-dd");
@@ -222,8 +240,18 @@ export default function AdminDashboardPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-base font-bold text-gray-900">관리자 ({formatDate(today)})</h1>
+      <PrintHeader title="관리자 전체 현황" subtitle={formatDate(today)} />
 
+      <div className="flex items-start justify-between gap-2">
+        <h1 className="text-base font-bold text-gray-900">관리자 ({formatDate(today)})</h1>
+        <PrintButton
+          sections={PRINT_SECTIONS}
+          selectedSections={printSections}
+          onSelectionChange={setPrintSections}
+        />
+      </div>
+
+      <PrintableSection sectionKey="today" selectedSections={printSections} className="space-y-6">
       {/* Top KPIs */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <KpiCard label="전체 지점"    value={branches.length} unit="개" />
@@ -286,10 +314,15 @@ export default function AdminDashboardPage() {
         </div>
       </div>
 
+      </PrintableSection>
+
       {/* ── Trainer sessions ───────────────────────────────────────────────── */}
-      <TrainerSessionSection />
+      <PrintableSection sectionKey="trainer" selectedSections={printSections}>
+        <TrainerSessionSection />
+      </PrintableSection>
 
       {/* ── 7-day section ───────────────────────────────────────────────────── */}
+      <PrintableSection sectionKey="week7" selectedSections={printSections}>
       <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm space-y-4">
         <div className="flex items-center justify-between">
           <p className="text-sm font-semibold text-gray-700">최근 7일 실적 (전 지점 합산)</p>
@@ -428,8 +461,10 @@ export default function AdminDashboardPage() {
           </>
         )}
       </div>
+      </PrintableSection>
 
       {/* Issues summary */}
+      <PrintableSection sectionKey="issues" selectedSections={printSections}>
       <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
         <p className="text-sm font-semibold text-gray-700 mb-3">운영 이슈 요약</p>
         <div className="grid grid-cols-3 gap-3">
@@ -450,8 +485,10 @@ export default function AdminDashboardPage() {
           })}
         </div>
       </div>
+      </PrintableSection>
 
       {/* Active campaigns */}
+      <PrintableSection sectionKey="campaigns" selectedSections={printSections}>
       {campaigns.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
           <p className="text-sm font-semibold text-gray-700 mb-3">진행 중 캠페인</p>
@@ -468,6 +505,7 @@ export default function AdminDashboardPage() {
           </div>
         </div>
       )}
+      </PrintableSection>
     </div>
   );
 }

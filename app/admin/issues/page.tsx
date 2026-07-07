@@ -4,6 +4,9 @@ import { useEffect, useState } from "react";
 import { getAllIssues, updateIssueStatus } from "@/services/issues";
 import { getAllBranches } from "@/services/branches";
 import { SeverityBadge, IssueStatusBadge } from "@/components/common/StatusBadge";
+import PrintButton from "@/components/print/PrintButton";
+import PrintHeader from "@/components/print/PrintHeader";
+import PrintableSection from "@/components/print/PrintableSection";
 import LoadingState from "@/components/common/LoadingState";
 import EmptyState from "@/components/common/EmptyState";
 import { formatDate } from "@/lib/utils";
@@ -18,6 +21,7 @@ export default function AdminIssuesPage() {
   const [loading, setLoading] = useState(true);
   const [filterType, setFilterType] = useState<IssueType | "">("");
   const [filterStatus, setFilterStatus] = useState<IssueStatus | "">("");
+  const [printSections, setPrintSections] = useState<string[]>(["issues"]);
 
   useEffect(() => {
     Promise.all([getAllIssues(), getAllBranches()]).then(([iss, bs]) => {
@@ -46,10 +50,19 @@ export default function AdminIssuesPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-base font-bold text-gray-900">운영 이슈 관리</h1>
+      <PrintHeader title="운영 이슈 현황" />
+
+      <div className="flex items-start justify-between gap-2">
+        <h1 className="text-base font-bold text-gray-900">운영 이슈 관리</h1>
+        <PrintButton
+          sections={[{ key: "issues", label: "운영 이슈" }]}
+          selectedSections={printSections}
+          onSelectionChange={setPrintSections}
+        />
+      </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2 no-print">
         <select value={filterType} onChange={(e) => setFilterType(e.target.value as IssueType | "")} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white">
           <option value="">전체 유형</option>
           <option value="claim">클레임</option>
@@ -64,6 +77,7 @@ export default function AdminIssuesPage() {
         </select>
       </div>
 
+      <PrintableSection sectionKey="issues" selectedSections={printSections}>
       {filtered.length === 0 ? <EmptyState title="이슈가 없습니다" /> : (
         <div className="space-y-3">
           {filtered.map((iss) => (
@@ -100,6 +114,7 @@ export default function AdminIssuesPage() {
           ))}
         </div>
       )}
+      </PrintableSection>
     </div>
   );
 }

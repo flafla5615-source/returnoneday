@@ -9,6 +9,9 @@ import {
 import { getAllBranches } from "@/services/branches";
 import LoadingState from "@/components/common/LoadingState";
 import EmptyState from "@/components/common/EmptyState";
+import PrintButton from "@/components/print/PrintButton";
+import PrintHeader from "@/components/print/PrintHeader";
+import PrintableSection from "@/components/print/PrintableSection";
 import { formatDate } from "@/lib/utils";
 import type { Campaign, Branch, MetricDefinition, CampaignStatus } from "@/types";
 import { PlusIcon, EditIcon, TrashIcon } from "lucide-react";
@@ -41,6 +44,7 @@ export default function AdminCampaignsPage() {
   const [newMetricKey, setNewMetricKey] = useState("");
   const [newMetricLabel, setNewMetricLabel] = useState("");
   const [saving, setSaving] = useState(false);
+  const [printSections, setPrintSections] = useState<string[]>(["campaigns"]);
 
   useEffect(() => {
     Promise.all([getAllCampaigns(), getAllBranches()]).then(([cs, bs]) => {
@@ -111,14 +115,24 @@ export default function AdminCampaignsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <PrintHeader title="캠페인 실적 현황" />
+
+      <div className="flex items-center justify-between gap-2">
         <h1 className="text-base font-bold text-gray-900">캠페인 관리</h1>
-        <button onClick={openCreate} className="flex items-center gap-1.5 px-3 py-2 bg-[#1e3a5f] text-white text-sm rounded-lg hover:bg-[#16304f]">
-          <PlusIcon className="w-4 h-4" />
-          캠페인 추가
-        </button>
+        <div className="flex items-center gap-2">
+          <PrintButton
+            sections={[{ key: "campaigns", label: "캠페인 실적" }]}
+            selectedSections={printSections}
+            onSelectionChange={setPrintSections}
+          />
+          <button onClick={openCreate} className="no-print flex items-center gap-1.5 px-3 py-2 bg-[#1e3a5f] text-white text-sm rounded-lg hover:bg-[#16304f]">
+            <PlusIcon className="w-4 h-4" />
+            캠페인 추가
+          </button>
+        </div>
       </div>
 
+      <PrintableSection sectionKey="campaigns" selectedSections={printSections}>
       {campaigns.length === 0 ? <EmptyState title="등록된 캠페인이 없습니다" /> : (
         <div className="space-y-3">
           {campaigns.map((c) => (
@@ -142,6 +156,7 @@ export default function AdminCampaignsPage() {
           ))}
         </div>
       )}
+      </PrintableSection>
 
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto py-4">

@@ -9,6 +9,9 @@ import { getAllReports, updateReportStatus } from "@/services/reports";
 import { getAllUsers } from "@/services/users";
 import { useAuth } from "@/contexts/AuthContext";
 import { ReportStatusBadge } from "@/components/common/StatusBadge";
+import PrintButton from "@/components/print/PrintButton";
+import PrintHeader from "@/components/print/PrintHeader";
+import PrintableSection from "@/components/print/PrintableSection";
 import LoadingState from "@/components/common/LoadingState";
 import EmptyState from "@/components/common/EmptyState";
 import {
@@ -51,6 +54,7 @@ export default function AdminReportsPage() {
   const [filterTo, setFilterTo] = useState(todayYMD());
 
   const [showTestData, setShowTestData] = useState(false);
+  const [printSections, setPrintSections] = useState<string[]>(["reports"]);
 
   const [actionReport, setActionReport] = useState<DailyReport | null>(null);
   const [actionType, setActionType] = useState<"revision" | "lock" | "unlock" | null>(null);
@@ -219,12 +223,21 @@ export default function AdminReportsPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-base font-bold text-gray-900">보고 관리</h1>
-        <p className="text-xs text-gray-400 mt-1">기간, 브랜드, 지역, 지점, 상태별로 보고서를 조회하고 후속 조치합니다.</p>
+      <PrintHeader title="보고 관리" subtitle={`${filterFrom} ~ ${filterTo}`} />
+
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h1 className="text-base font-bold text-gray-900">보고 관리</h1>
+          <p className="text-xs text-gray-400 mt-1">기간, 브랜드, 지역, 지점, 상태별로 보고서를 조회하고 후속 조치합니다.</p>
+        </div>
+        <PrintButton
+          sections={[{ key: "reports", label: "보고 상세" }]}
+          selectedSections={printSections}
+          onSelectionChange={setPrintSections}
+        />
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm space-y-3">
+      <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm space-y-3 no-print">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
           <input
             type="date"
@@ -328,6 +341,7 @@ export default function AdminReportsPage() {
         </div>
       </div>
 
+      <PrintableSection sectionKey="reports" selectedSections={printSections}>
       {error ? (
         <div className="rounded-xl border border-red-200 bg-red-50 p-6 space-y-1">
           <p className="text-sm font-semibold text-red-700">데이터 로드 실패</p>
@@ -431,6 +445,7 @@ export default function AdminReportsPage() {
           </table>
         </div>
       )}
+      </PrintableSection>
 
       {actionReport && actionType && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">

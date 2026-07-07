@@ -8,6 +8,9 @@ import { getReportById, updateReportStatus } from "@/services/reports";
 import { getIssuesByReport } from "@/services/issues";
 import { getBranchesByIds } from "@/services/branches";
 import { ReportStatusBadge, SeverityBadge, IssueStatusBadge } from "@/components/common/StatusBadge";
+import PrintButton from "@/components/print/PrintButton";
+import PrintHeader from "@/components/print/PrintHeader";
+import PrintableSection from "@/components/print/PrintableSection";
 import LoadingState from "@/components/common/LoadingState";
 import { formatDate, formatDateTime, calcPtConversionRate, formatPercent, getExpiringTmTotal, getUnregisteredTmTotal, getOfflinePromoTotal, isAbnormalSubmittedReport } from "@/lib/utils";
 import type { DailyReport, Issue, ReportStatus } from "@/types";
@@ -34,6 +37,7 @@ export default function AdminReportDetailPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [comment, setComment] = useState("");
   const [showRevisionModal, setShowRevisionModal] = useState(false);
+  const [printSections, setPrintSections] = useState<string[]>(["report"]);
 
   useEffect(() => {
     if (!reportId) return;
@@ -70,14 +74,24 @@ export default function AdminReportDetailPage() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-4">
+      <PrintHeader
+        title="지점장 일일보고"
+        subtitle={`${branchName || report.branchId} / ${report.reportDate}`}
+      />
+
       <div className="flex items-center gap-3">
-        <Link href="/admin/reports" className="p-1.5 rounded-lg hover:bg-gray-100">
+        <Link href="/admin/reports" className="p-1.5 rounded-lg hover:bg-gray-100 no-print">
           <ChevronLeftIcon className="w-5 h-5 text-gray-600" />
         </Link>
         <div className="flex-1">
           <h1 className="text-base font-bold text-gray-900">{formatDate(report.reportDate)} 보고서</h1>
           <p className="text-xs text-gray-400">{branchName || report.branchId}</p>
         </div>
+        <PrintButton
+          sections={[{ key: "report", label: "보고 상세" }]}
+          selectedSections={printSections}
+          onSelectionChange={setPrintSections}
+        />
         <div className="flex flex-col items-end gap-1">
           <ReportStatusBadge status={report.status} />
           {isAbnormalSubmitted && (
@@ -88,6 +102,7 @@ export default function AdminReportDetailPage() {
         </div>
       </div>
 
+      <PrintableSection sectionKey="report" selectedSections={printSections} className="space-y-4">
       {isAbnormalSubmitted && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
           제출 기록은 있으나 주요 데이터가 비어 있습니다. 지점장에게 보고 다시 작성을 안내하세요.
@@ -180,7 +195,7 @@ export default function AdminReportDetailPage() {
       )}
 
       {(canRequestRevision || canLock || canUnlock) && (
-        <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+        <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm no-print">
           <p className="text-sm font-semibold text-gray-800 mb-3">관리자 액션</p>
           <div className="flex flex-wrap gap-2">
             {canRequestRevision && (
@@ -212,6 +227,7 @@ export default function AdminReportDetailPage() {
           </div>
         </div>
       )}
+      </PrintableSection>
 
       {showRevisionModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">

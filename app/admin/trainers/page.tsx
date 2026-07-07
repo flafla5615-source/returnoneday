@@ -7,6 +7,9 @@ import { getAllTrainers } from "@/services/trainers";
 import { getAllTrainerDailyReportsByPeriod } from "@/services/trainerDailyReports";
 import { getAllReports } from "@/services/reports";
 import LoadingState from "@/components/common/LoadingState";
+import PrintButton from "@/components/print/PrintButton";
+import PrintHeader from "@/components/print/PrintHeader";
+import PrintableSection from "@/components/print/PrintableSection";
 import { cn, todayYMD, formatDate } from "@/lib/utils";
 import type { Branch, Trainer, TrainerDailyReport } from "@/types";
 import { ChevronDownIcon, ChevronRightIcon, SearchIcon } from "lucide-react";
@@ -106,6 +109,9 @@ export default function TrainerDashboardPage() {
   // Expansion
   const [expandedBranchId, setExpandedBranchId] = useState<string | null>(null);
   const [expandedTrainerId, setExpandedTrainerId] = useState<string | null>(null);
+
+  // Print: /admin/trainers 기본값은 트레이너 세션 실적 ON
+  const [printSections, setPrintSections] = useState<string[]>(["trainer"]);
 
   const { from, to } = useMemo(() => {
     switch (preset) {
@@ -404,17 +410,29 @@ export default function TrainerDashboardPage() {
 
   return (
     <div className="space-y-5">
+      <PrintHeader
+        title="트레이너 세션 실적"
+        subtitle={`${formatDate(from)} ~ ${formatDate(to)}`}
+      />
+
       {/* Header */}
-      <div>
-        <h1 className="text-base font-bold text-gray-900">트레이너 실적</h1>
-        <p className="text-xs text-gray-500 mt-0.5">
-          {formatDate(from)} ~ {formatDate(to)} ·{" "}
-          {includeDrafts ? "임시저장 포함" : "제출 완료된 보고 기준"} · 수업 세션 기준
-        </p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h1 className="text-base font-bold text-gray-900">트레이너 실적</h1>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {formatDate(from)} ~ {formatDate(to)} ·{" "}
+            {includeDrafts ? "임시저장 포함" : "제출 완료된 보고 기준"} · 수업 세션 기준
+          </p>
+        </div>
+        <PrintButton
+          sections={[{ key: "trainer", label: "트레이너 세션 실적" }]}
+          selectedSections={printSections}
+          onSelectionChange={setPrintSections}
+        />
       </div>
 
       {/* Filters */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-3">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-3 no-print">
         <div className="flex flex-wrap gap-2">
           {(
             [
@@ -516,6 +534,7 @@ export default function TrainerDashboardPage() {
         </div>
       </div>
 
+      <PrintableSection sectionKey="trainer" selectedSections={printSections} className="space-y-5">
       {periodLoading ? (
         <LoadingState />
       ) : (
@@ -874,6 +893,7 @@ export default function TrainerDashboardPage() {
           )}
         </>
       )}
+      </PrintableSection>
     </div>
   );
 }

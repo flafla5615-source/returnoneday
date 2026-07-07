@@ -26,3 +26,75 @@ input[type="number"] {
   scrollbar-width: thin;
   scrollbar-color: #cbd5e1 transparent;
 }
+
+/* ── Print ─────────────────────────────────────────────────────────────────── */
+
+.print-only {
+  display: none !important;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  /* 선택 인쇄: 체크 해제된 섹션 숨김 */
+  .print-hidden {
+    display: none !important;
+  }
+
+  body {
+    background: white !important;
+    color: black !important;
+  }
+
+  .print-page,
+  .print-section {
+    background: white !important;
+    color: black !important;
+    box-shadow: none !important;
+  }
+
+  .print-section {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    border-color: #d1d5db !important;
+  }
+
+  /* 표가 페이지를 넘어가도 행 단위로 깨지지 않게 */
+  table {
+    border-collapse: collapse;
+  }
+  tr,
+  td,
+  th {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  th,
+  td {
+    border: 1px solid #d1d5db !important;
+  }
+  thead {
+    display: table-header-group;
+  }
+
+  /* 화면용 스크롤 컨테이너 펼침 */
+  .overflow-x-auto,
+  .overflow-y-auto,
+  main {
+    overflow: visible !important;
+  }
+  main {
+    padding: 0 !important;
+  }
+
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+}
