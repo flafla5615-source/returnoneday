@@ -19,6 +19,8 @@ export default function RootPage() {
       router.replace("/login");
     } else if (profile.role === "admin") {
       router.replace("/admin");
+    } else if (profile.mustChangePassword) {
+      router.replace("/change-password");
     } else {
       router.replace("/manager");
     }

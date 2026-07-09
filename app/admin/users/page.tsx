@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useState, useMemo, useRef } from "react";
-import { httpsCallable } from "firebase/functions";
-import { sendPasswordResetEmail } from "firebase/auth";
-import { auth, functions } from "@/lib/firebase";
 import { getAllBranches } from "@/services/branches";
 import { getAllUsers, updateUserProfileWithBranchAssignments } from "@/services/users";
 import { getAllManagerInvites, upsertManagerInvite } from "@/services/managerInvites";
+import {
+  createBranchAccounts,
+  type BranchAccountCreationMethod,
+  type BranchAccountResult,
+} from "@/services/branchAccounts";
+import { resetPassword } from "@/lib/auth";
 import LoadingState from "@/components/common/LoadingState";
 import { cn, formatDate } from "@/lib/utils";
 import type { Branch, UserProfile, ManagerInvite, ManagerInviteStatus, UserRole, UserStatus } from "@/types";
@@ -19,8 +22,6 @@ import {
   SaveIcon,
   XIcon,
   BuildingIcon,
-  MailIcon,
-  UserPlusIcon,
 } from "lucide-react";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -33,23 +34,6 @@ const HQ_BRANCHES = ["머팩 벌리점", "머팩 보건대점", "머팩 신진�
 
 const EMAIL_DOMAIN = "returnlife.co.kr";
 
-type OperationalAccount = {
-  key: string;          // branch.id — managerInvites 문서 키
-  name: string;         // 지점명 (users.name으로 저장될 값)
-  branches: string[];   // 담당 지점명 (기본 1개)
-  defaultEmail: string; // {branchId}@returnlife.co.kr
-};
-
-type CreationRowStatus = "미생성" | "users 문서 존재" | "지점 연결 완료" | "오류";
-
-type CreateResult = {
-  branchId: string;
-  uid?: string;
-  createdAuth?: boolean;
-  ok: boolean;
-  error?: string;
-};
-
 // branchId 기반 이메일 생성 — 이메일에 쓸 수 없는 문자는 하이픈으로 변환
 function branchEmailOf(branchId: string): string {
   const local = branchId
@@ -59,6 +43,15 @@ function branchEmailOf(branchId: string): string {
     .replace(/^[-.]+|[-.]+$/g, "");
   return `${local}@${EMAIL_DOMAIN}`;
 }
+
+type OperationalAccount = {
+  key: string;          // branch.id — managerInvites 문서 키
+  branchId: string;
+  name: string;         // 지점명 (users.name으로 저장될 값)
+  brand: string;
+  branches: string[];   // 담당 지점명 (기본 1개)
+  defaultEmail: string; // {branchId}@returnlife.co.kr
+};
 
 const STATUS_LABEL: Record<ManagerInviteStatus, string> = {
   email_required:  "이메일 필요",
@@ -88,10 +81,22 @@ function deriveStatus(email: string, matchedUser?: UserProfile): ManagerInviteSt
   return "account_created";
 }
 
+function validateStrongPassword(password: string): string | null {
+  if (
+    password.length < 8 ||
+    !/[A-Za-z]/.test(password) ||
+    !/\d/.test(password) ||
+    !/[^A-Za-z0-9]/.test(password)
+  ) {
+    return "비밀번호 조건을 확인해주세요.";
+  }
+  return null;
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function AdminUsersPage() {
-  const [tab, setTab] = useState<"preparation" | "creation" | "existing">("preparation");
+  const [tab, setTab] = useState<"preparation" | "existing">("preparation");
   const [branches, setBranches] = useState<Branch[]>([]);
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [invites, setInvites] = useState<Record<string, ManagerInvite>>({});
@@ -105,6 +110,15 @@ export default function AdminUsersPage() {
 
   // Preview modal
   const [showPreview, setShowPreview] = useState(false);
+
+  // Branch account creation
+  const [creationMethod, setCreationMethod] =
+    useState<BranchAccountCreationMethod>("temporary_password");
+  const [initialPassword, setInitialPassword] = useState("");
+  const [initialPasswordConfirm, setInitialPasswordConfirm] = useState("");
+  const [creatingAccounts, setCreatingAccounts] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [createResults, setCreateResults] = useState<BranchAccountResult[]>([]);
 
   // CSV upload
   const csvRef = useRef<HTMLInputElement>(null);
@@ -141,9 +155,11 @@ export default function AdminUsersPage() {
         .filter((b) => !HQ_BRANCHES.includes(b.name))
         .map((b) => ({
           key: b.id,
+          branchId: b.id,
           name: b.name,
+          brand: b.brand,
           branches: [b.name],
-          defaultEmail: `${b.id}@${EMAIL_DOMAIN}`,
+          defaultEmail: branchEmailOf(b.id),
         })),
     [branches]
   );
@@ -163,8 +179,6 @@ export default function AdminUsersPage() {
       ([k, inv]) => k !== currentKey && inv.email === email
     );
     if (dup) return `"${dup[1].name}"에 이미 입력된 이메일입니다`;
-    const existing = emailToUser[email];
-    if (existing) return `기존 Firebase 계정이 존재합니다 (${existing.name || email})`;
     return null;
   }
 
@@ -207,9 +221,11 @@ export default function AdminUsersPage() {
   // ── CSV ────────────────────────────────────────────────────────────────────
 
   function downloadCSV() {
-    const rows: string[][] = [["지점명", "이메일", "담당지점"]];
-    operationalAccounts.forEach(({ key, name, branches: bNames }) => {
-      rows.push([name, invites[key]?.email ?? "", bNames.join(",")]);
+    const rows: string[][] = [["지점명", "브랜드", "branchId", "이메일", "계정상태"]];
+    operationalAccounts.forEach(({ key, name, brand, branchId }) => {
+      const email = invites[key]?.email ?? "";
+      const status = deriveStatus(email, email ? emailToUser[email] : undefined);
+      rows.push([name, brand, branchId, email, STATUS_LABEL[status]]);
     });
     const csv = rows.map((r) => r.map((c) => `"${c}"`).join(",")).join("\n");
     const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
@@ -225,17 +241,27 @@ export default function AdminUsersPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     const text = await file.text();
-    const lines = text.split(/\r?\n/).filter(Boolean).slice(1); // skip header
+    const lines = text.split(/\r?\n/).filter(Boolean);
+    const header = lines[0]
+      ?.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)
+      .map((p) => p.replace(/^"|"$/g, "").trim());
+    const branchNameIndex = header?.findIndex((h) => h === "지점명") ?? 0;
+    const branchIdIndex = header?.findIndex((h) => h === "branchId") ?? -1;
+    const emailIndex = header?.findIndex((h) => h === "이메일") ?? 1;
 
-    for (const line of lines) {
+    for (const line of lines.slice(1)) {
       // Split by commas outside quotes
       const parts = line
         .split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)
         .map((p) => p.replace(/^"|"$/g, "").trim());
-      const [csvName, csvEmail] = parts;
+      const csvName = parts[branchNameIndex] ?? "";
+      const csvBranchId = branchIdIndex >= 0 ? parts[branchIdIndex] : "";
+      const csvEmail = parts[emailIndex] ?? "";
       if (!csvName) continue;
 
-      const assignment = operationalAccounts.find((m) => m.name === csvName);
+      const assignment = operationalAccounts.find(
+        (m) => m.name === csvName || (csvBranchId && m.branchId === csvBranchId)
+      );
       if (!assignment) continue;
 
       const email = csvEmail ?? "";
@@ -300,121 +326,91 @@ export default function AdminUsersPage() {
     return { ...stats, branchConnections, errors: errorDetails.length, errorDetails };
   }, [stats, operationalAccounts, invites, emailToUser, branchNameToId]);
 
-  // ── 지점 운영계정 생성 탭 ───────────────────────────────────────────────────
+  const accountCreationTargets = useMemo(
+    () =>
+      operationalAccounts
+        .map((acc) => ({
+          ...acc,
+          email: invites[acc.key]?.email?.trim() ?? "",
+        }))
+        .filter((acc) => acc.email),
+    [operationalAccounts, invites]
+  );
 
-  const [selectedCreate, setSelectedCreate] = useState<string[]>([]);
-  const [creating, setCreating] = useState(false);
-  const [sendingMail, setSendingMail] = useState(false);
-  const [createResults, setCreateResults] = useState<Record<string, CreateResult>>({});
-  const [mailResults, setMailResults] = useState<Record<string, string>>({});
-  const [creationNotice, setCreationNotice] = useState<string | null>(null);
+  const passwordError = useMemo(() => {
+    if (creationMethod !== "temporary_password") return null;
+    const strength = validateStrongPassword(initialPassword);
+    if (strength) return strength;
+    if (initialPassword !== initialPasswordConfirm) {
+      return "비밀번호가 일치하지 않습니다.";
+    }
+    return null;
+  }, [creationMethod, initialPassword, initialPasswordConfirm]);
 
-  const creationRows = useMemo(() => {
-    return branches
-      .filter((b) => !HQ_BRANCHES.includes(b.name))
-      .map((b) => {
-        const email = branchEmailOf(b.id);
-        const linkedUser = emailToUser[email];
-        const res = createResults[b.id];
-        let status: CreationRowStatus;
-        if (res && !res.ok) status = "오류";
-        else if (linkedUser && (b.managerUids ?? []).includes(linkedUser.uid)) status = "지점 연결 완료";
-        else if (linkedUser) status = "users 문서 존재";
-        else status = "미생성";
-        return {
-          branch: b,
-          email,
-          linkedUser,
-          status,
-          error: res && !res.ok ? res.error : undefined,
-        };
-      });
-  }, [branches, emailToUser, createResults]);
-
-  async function refreshUsersAndBranches() {
-    const [bs, us] = await Promise.all([getAllBranches(), getAllUsers()]);
-    setBranches(bs);
+  async function refreshUserData() {
+    const [us, inv] = await Promise.all([getAllUsers(), getAllManagerInvites()]);
     setUsers(us);
+    setInvites(inv);
   }
 
-  async function handleCreateAccounts() {
-    const targets = creationRows.filter((r) => selectedCreate.includes(r.branch.id));
-    if (targets.length === 0) {
-      setCreationNotice("생성할 지점을 선택해주세요.");
+  async function handleCreateBranchAccounts() {
+    if (accountCreationTargets.length === 0) {
+      setCreateError("이메일이 입력된 운영계정이 없습니다.");
       return;
     }
-    setCreating(true);
-    setCreationNotice(null);
+    if (passwordError) {
+      setCreateError(passwordError);
+      return;
+    }
+
+    setCreatingAccounts(true);
+    setCreateError(null);
+    setCreateResults([]);
+
     try {
-      const fn = httpsCallable<
-        { branches: { branchId: string; branchName: string; email: string }[] },
-        { results: CreateResult[] }
-      >(functions, "createBranchAccounts");
-      const res = await fn({
-        branches: targets.map((t) => ({
-          branchId: t.branch.id,
-          branchName: t.branch.name,
-          email: t.email,
+      const results = await createBranchAccounts({
+        method: creationMethod,
+        password: creationMethod === "temporary_password" ? initialPassword : undefined,
+        accounts: accountCreationTargets.map((acc) => ({
+          branchId: acc.branchId,
+          branchName: acc.name,
+          email: acc.email,
         })),
       });
-      setCreateResults((prev) => {
-        const next = { ...prev };
-        res.data.results.forEach((r) => { next[r.branchId] = r; });
-        return next;
-      });
-      const okCount = res.data.results.filter((r) => r.ok).length;
-      const failCount = res.data.results.length - okCount;
-      setCreationNotice(
-        `계정 처리 완료 — 성공 ${okCount}건${failCount > 0 ? `, 실패 ${failCount}건 (상태 컬럼 확인)` : ""}`
-      );
-      await refreshUsersAndBranches();
-    } catch (e) {
-      console.error("[createBranchAccounts] failed", e);
-      setCreationNotice(`계정 생성 호출 실패: ${(e as Error).message}`);
-    } finally {
-      setCreating(false);
-    }
-  }
 
-  async function handleSendResetMails() {
-    const targets = creationRows.filter(
-      (r) =>
-        selectedCreate.includes(r.branch.id) &&
-        (r.linkedUser || createResults[r.branch.id]?.ok)
-    );
-    if (targets.length === 0) {
-      setCreationNotice("메일을 보낼 계정을 선택해주세요. (계정이 생성된 지점만 가능)");
-      return;
-    }
-    setSendingMail(true);
-    const results: Record<string, string> = {};
-    for (const t of targets) {
-      try {
-        await sendPasswordResetEmail(auth, t.email);
-        results[t.branch.id] = "발송됨";
-      } catch (e) {
-        results[t.branch.id] = `실패: ${(e as { code?: string }).code ?? "unknown"}`;
+      const nextResults: BranchAccountResult[] = [];
+      for (const result of results) {
+        if (creationMethod !== "reset_email" || result.status === "failed") {
+          nextResults.push(result);
+          continue;
+        }
+
+        try {
+          await resetPassword(result.email);
+          nextResults.push({
+            ...result,
+            resetEmailSent: true,
+            message: `${result.message ?? ""} 비밀번호 재설정 메일을 발송했습니다.`.trim(),
+          });
+        } catch {
+          nextResults.push({
+            ...result,
+            resetEmailSent: false,
+            message: `${result.message ?? ""} 비밀번호 재설정 메일 발송에 실패했습니다.`.trim(),
+          });
+        }
       }
-    }
-    setMailResults((prev) => ({ ...prev, ...results }));
-    setSendingMail(false);
-    const sent = Object.values(results).filter((v) => v === "발송됨").length;
-    setCreationNotice(`비밀번호 재설정 메일 발송 완료 (${sent}/${targets.length}건)`);
-  }
 
-  function downloadCreationCSV() {
-    const rows: string[][] = [["지점명", "브랜드", "branchId", "이메일", "상태"]];
-    creationRows.forEach((r) =>
-      rows.push([r.branch.name, r.branch.brand, r.branch.id, r.email, r.status])
-    );
-    const csv = rows.map((r) => r.map((c) => `"${c}"`).join(",")).join("\n");
-    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "branch_operation_accounts.csv";
-    a.click();
-    URL.revokeObjectURL(url);
+      setCreateResults(nextResults);
+      await refreshUserData();
+      setShowPreview(false);
+    } catch (error) {
+      console.error("[AdminUsers] create branch accounts failed", error);
+      const message = (error as { message?: string }).message;
+      setCreateError(message || "계정 생성 중 오류가 발생했습니다.");
+    } finally {
+      setCreatingAccounts(false);
+    }
   }
 
   // 이메일이 비어 있는 운영계정에 {branchId}@returnlife.co.kr 기본 이메일을 일괄 적용
@@ -497,11 +493,6 @@ export default function AdminUsersPage() {
           onClick={() => setTab("preparation")}
         />
         <TabButton
-          label={`지점 운영계정 생성 (${creationRows.length})`}
-          active={tab === "creation"}
-          onClick={() => setTab("creation")}
-        />
-        <TabButton
           label={`기존 Firebase 계정 (${users.length})`}
           active={tab === "existing"}
           onClick={() => setTab("existing")}
@@ -520,6 +511,96 @@ export default function AdminUsersPage() {
           </div>
 
           {/* Action buttons */}
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-4">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900">계정 생성 방식</h2>
+              <p className="text-xs text-gray-500 mt-1">
+                비밀번호는 계정 생성 시에만 사용하며 Firestore에 저장하지 않습니다.
+              </p>
+            </div>
+            <div className="grid md:grid-cols-2 gap-3">
+              <label
+                className={cn(
+                  "border rounded-lg p-3 cursor-pointer transition-colors",
+                  creationMethod === "temporary_password"
+                    ? "border-[#1e3a5f] bg-blue-50"
+                    : "border-gray-200 bg-white hover:bg-gray-50"
+                )}
+              >
+                <input
+                  type="radio"
+                  name="creationMethod"
+                  value="temporary_password"
+                  checked={creationMethod === "temporary_password"}
+                  onChange={() => setCreationMethod("temporary_password")}
+                  className="sr-only"
+                />
+                <span className="text-sm font-medium text-gray-900">관리자가 초기 비밀번호 직접 설정</span>
+                <span className="block text-xs text-gray-500 mt-1">
+                  생성 후 최초 로그인 시 비밀번호 변경을 요구합니다.
+                </span>
+              </label>
+              <label
+                className={cn(
+                  "border rounded-lg p-3 cursor-pointer transition-colors",
+                  creationMethod === "reset_email"
+                    ? "border-[#1e3a5f] bg-blue-50"
+                    : "border-gray-200 bg-white hover:bg-gray-50"
+                )}
+              >
+                <input
+                  type="radio"
+                  name="creationMethod"
+                  value="reset_email"
+                  checked={creationMethod === "reset_email"}
+                  onChange={() => setCreationMethod("reset_email")}
+                  className="sr-only"
+                />
+                <span className="text-sm font-medium text-gray-900">비밀번호 재설정 메일 발송</span>
+                <span className="block text-xs text-gray-500 mt-1">
+                  해당 이메일을 실제로 수신할 수 있어야 비밀번호 재설정 메일을 받을 수 있습니다.
+                </span>
+              </label>
+            </div>
+
+            {creationMethod === "temporary_password" && (
+              <div className="grid md:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-gray-700 block mb-1">초기 비밀번호</label>
+                  <input
+                    type="password"
+                    value={initialPassword}
+                    onChange={(e) => setInitialPassword(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]"
+                    autoComplete="new-password"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-gray-700 block mb-1">초기 비밀번호 확인</label>
+                  <input
+                    type="password"
+                    value={initialPasswordConfirm}
+                    onChange={(e) => setInitialPasswordConfirm(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]"
+                    autoComplete="new-password"
+                  />
+                </div>
+                <p className="md:col-span-2 text-xs text-gray-500">
+                  초기 비밀번호는 계정 생성 시에만 사용되며 저장되지 않습니다. 생성 후 지점 담당자에게 별도로 전달해주세요.
+                </p>
+                {passwordError && (initialPassword || initialPasswordConfirm) && (
+                  <p className="md:col-span-2 text-xs text-red-600">{passwordError}</p>
+                )}
+              </div>
+            )}
+
+            {createError && (
+              <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
+                {createError}
+              </p>
+            )}
+          </div>
+
           <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={applyDefaultEmails}
@@ -552,9 +633,13 @@ export default function AdminUsersPage() {
               className="flex items-center gap-1.5 px-3 py-2 text-xs bg-[#1e3a5f] text-white rounded-lg hover:bg-[#16304f]"
             >
               <CheckCircleIcon className="w-3.5 h-3.5" />
-              계정 생성 준비 확인
+              계정 생성 확인
             </button>
           </div>
+
+          {createResults.length > 0 && (
+            <CreationResultsTable results={createResults} />
+          )}
 
           {/* Manager table */}
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
@@ -716,136 +801,9 @@ export default function AdminUsersPage() {
               위 지점은 admin 계정에서 직접 보고 관리를 수행합니다.
             </p>
             <p className="text-xs text-blue-600 mt-1">
-              비밀번호는 코드·Firestore에 저장하지 않습니다. Firebase Auth 계정 생성 후
-              비밀번호 재설정 메일을 발송하는 방식으로 운영합니다.
+              비밀번호는 코드·Firestore에 저장하지 않습니다. 초기 비밀번호 방식은 생성 시에만
+              Firebase Auth로 전달하고, 재설정 메일 방식은 실제 수신 가능한 이메일이 필요합니다.
             </p>
-          </div>
-        </div>
-      )}
-
-      {/* ── Tab: 지점 운영계정 생성 ──────────────────────────────────────────── */}
-      {tab === "creation" && (
-        <div className="space-y-4">
-          <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-xs text-blue-800">
-            비밀번호는 저장하지 않습니다. 각 운영계정 메일로 비밀번호 설정 링크가 발송됩니다.
-          </div>
-
-          {/* Action buttons */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={() => setSelectedCreate(creationRows.map((r) => r.branch.id))}
-              className="px-3 py-2 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700"
-            >
-              전체 선택
-            </button>
-            <button
-              onClick={() => setSelectedCreate([])}
-              className="px-3 py-2 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700"
-            >
-              전체 해제
-            </button>
-            <button
-              onClick={handleCreateAccounts}
-              disabled={creating}
-              className="flex items-center gap-1.5 px-3 py-2 text-xs bg-[#1e3a5f] text-white rounded-lg hover:bg-[#16304f] disabled:opacity-50"
-            >
-              <UserPlusIcon className="w-3.5 h-3.5" />
-              {creating ? "생성 중..." : `선택 계정 생성 (${selectedCreate.length})`}
-            </button>
-            <button
-              onClick={handleSendResetMails}
-              disabled={sendingMail}
-              className="flex items-center gap-1.5 px-3 py-2 text-xs border border-[#1e3a5f] text-[#1e3a5f] rounded-lg hover:bg-[#1e3a5f]/5 disabled:opacity-50"
-            >
-              <MailIcon className="w-3.5 h-3.5" />
-              {sendingMail ? "발송 중..." : "비밀번호 재설정 메일 발송"}
-            </button>
-            <button
-              onClick={downloadCreationCSV}
-              className="flex items-center gap-1.5 px-3 py-2 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700"
-            >
-              <DownloadIcon className="w-3.5 h-3.5" />
-              CSV 다운로드
-            </button>
-          </div>
-
-          {creationNotice && (
-            <p className="text-xs text-gray-700 bg-gray-100 rounded-lg px-3 py-2">{creationNotice}</p>
-          )}
-
-          {/* Creation table */}
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
-            <table className="w-full text-sm min-w-[860px]">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className="px-3 py-3 text-left">
-                    <input
-                      type="checkbox"
-                      checked={selectedCreate.length === creationRows.length && creationRows.length > 0}
-                      onChange={(e) =>
-                        setSelectedCreate(e.target.checked ? creationRows.map((r) => r.branch.id) : [])
-                      }
-                      className="rounded border-gray-300"
-                    />
-                  </th>
-                  {["지점명", "브랜드", "branchId", "생성될 이메일", "연결된 계정", "상태", "메일"].map((h) => (
-                    <th key={h} className="px-3 py-3 text-left text-xs font-medium text-gray-500 whitespace-nowrap">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {creationRows.map((r) => (
-                  <tr key={r.branch.id} className="hover:bg-gray-50">
-                    <td className="px-3 py-2.5">
-                      <input
-                        type="checkbox"
-                        checked={selectedCreate.includes(r.branch.id)}
-                        onChange={(e) =>
-                          setSelectedCreate((prev) =>
-                            e.target.checked
-                              ? [...prev, r.branch.id]
-                              : prev.filter((id) => id !== r.branch.id)
-                          )
-                        }
-                        className="rounded border-gray-300"
-                      />
-                    </td>
-                    <td className="px-3 py-2.5 font-medium text-gray-900 whitespace-nowrap">{r.branch.name}</td>
-                    <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">{r.branch.brand}</td>
-                    <td className="px-3 py-2.5 text-xs text-gray-500 font-mono">{r.branch.id}</td>
-                    <td className="px-3 py-2.5 text-xs text-gray-700 font-mono">{r.email}</td>
-                    <td className="px-3 py-2.5 text-xs text-gray-500">
-                      {(r.branch.managerUids ?? []).length > 0
-                        ? `${(r.branch.managerUids ?? []).length}명 연결됨`
-                        : "—"}
-                    </td>
-                    <td className="px-3 py-2.5 whitespace-nowrap">
-                      <span
-                        className={cn(
-                          "inline-flex px-2 py-0.5 rounded-full text-xs font-medium",
-                          r.status === "지점 연결 완료"
-                            ? "bg-green-100 text-green-700"
-                            : r.status === "users 문서 존재"
-                            ? "bg-blue-100 text-blue-700"
-                            : r.status === "오류"
-                            ? "bg-red-100 text-red-700"
-                            : "bg-gray-100 text-gray-600"
-                        )}
-                        title={r.error}
-                      >
-                        {r.status}
-                      </span>
-                      {r.error && <p className="text-[10px] text-red-500 mt-0.5 max-w-[180px]">{r.error}</p>}
-                    </td>
-                    <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">
-                      {mailResults[r.branch.id] ?? "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
           </div>
         </div>
       )}
@@ -933,7 +891,7 @@ export default function AdminUsersPage() {
           />
           <div className="relative bg-white rounded-xl shadow-xl p-6 w-full max-w-md space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="font-semibold text-gray-900">계정 생성 준비 확인</h3>
+              <h3 className="font-semibold text-gray-900">계정 생성 확인</h3>
               <button
                 onClick={() => setShowPreview(false)}
                 className="text-gray-400 hover:text-gray-600"
@@ -984,15 +942,30 @@ export default function AdminUsersPage() {
             )}
 
             <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-xs text-yellow-800">
-              ⚠️ 실제 계정은 아직 생성되지 않습니다. 이메일을 모두 입력한 후 계정 생성 단계를 진행하세요.
+              {creationMethod === "temporary_password"
+                ? "초기 비밀번호 값은 저장되지 않으며, 생성 후 결과 화면에도 표시하지 않습니다."
+                : "재설정 메일 방식은 해당 이메일을 실제로 수신할 수 있어야 합니다."}
             </div>
 
-            <button
-              onClick={() => setShowPreview(false)}
-              className="w-full py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50"
-            >
-              닫기
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowPreview(false)}
+                className="flex-1 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50"
+              >
+                닫기
+              </button>
+              <button
+                onClick={handleCreateBranchAccounts}
+                disabled={
+                  creatingAccounts ||
+                  accountCreationTargets.length === 0 ||
+                  (creationMethod === "temporary_password" && !!passwordError)
+                }
+                className="flex-1 py-2 bg-[#1e3a5f] text-white rounded-lg text-sm hover:bg-[#16304f] disabled:opacity-50"
+              >
+                {creatingAccounts ? "생성 중..." : "계정 생성"}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1158,6 +1131,76 @@ function PreviewRow({
       >
         {value}
       </span>
+    </div>
+  );
+}
+
+function CreationResultsTable({ results }: { results: BranchAccountResult[] }) {
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
+      <div className="px-4 py-3 border-b border-gray-100">
+        <h2 className="text-sm font-semibold text-gray-900">계정 생성 결과</h2>
+        <p className="text-xs text-gray-400 mt-0.5">
+          초기 비밀번호 값은 다시 표시하지 않습니다.
+        </p>
+      </div>
+      <table className="w-full text-sm min-w-[820px]">
+        <thead className="bg-gray-50 border-b border-gray-200">
+          <tr>
+            {[
+              "지점명",
+              "이메일",
+              "생성 상태",
+              "users 문서",
+              "branches.managerUids",
+              "초기 비밀번호",
+              "메시지",
+            ].map((header) => (
+              <th key={header} className="px-4 py-3 text-left text-xs font-medium text-gray-500">
+                {header}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {results.map((result) => (
+            <tr key={`${result.branchId}-${result.email}`} className="hover:bg-gray-50">
+              <td className="px-4 py-3 font-medium text-gray-900">{result.branchName}</td>
+              <td className="px-4 py-3 text-gray-600">{result.email}</td>
+              <td className="px-4 py-3">
+                <span
+                  className={cn(
+                    "inline-flex px-2 py-0.5 rounded-full text-xs font-medium",
+                    result.status === "failed"
+                      ? "bg-red-100 text-red-700"
+                      : result.status === "created"
+                      ? "bg-green-100 text-green-700"
+                      : "bg-blue-100 text-blue-700"
+                  )}
+                >
+                  {result.status === "created"
+                    ? "신규 생성"
+                    : result.status === "linked_existing"
+                    ? "기존 계정 연결"
+                    : "실패"}
+                </span>
+              </td>
+              <td className="px-4 py-3 text-xs">
+                {result.userDocumentLinked ? "연결됨" : "미연결"}
+              </td>
+              <td className="px-4 py-3 text-xs">
+                {result.branchManagerUidsLinked ? "연결됨" : "미연결"}
+              </td>
+              <td className="px-4 py-3 text-xs">
+                {result.initialPasswordSet ? "설정됨" : "미설정"}
+              </td>
+              <td className="px-4 py-3 text-xs text-gray-500 max-w-[260px]">
+                {result.message ?? "-"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
