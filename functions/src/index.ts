@@ -1,10 +1,135 @@
-import { onRequest } from "firebase-functions/v2/https";
+import { onRequest, onCall, HttpsError } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as admin from "firebase-admin";
 import * as nodemailer from "nodemailer";
 
 admin.initializeApp();
 const db = admin.firestore();
+
+// ─── 지점 운영계정 생성 (admin 전용) ─────────────────────────────────────────
+// 비밀번호는 어디에도 저장하지 않는다. Auth 계정만 만들고,
+// 비밀번호 설정은 클라이언트에서 재설정 메일 발송으로 처리한다.
+
+interface CreateAccountInput {
+  branchId: string;
+  branchName: string;
+  email: string;
+}
+
+interface CreateAccountResult {
+  branchId: string;
+  uid?: string;
+  createdAuth?: boolean;
+  ok: boolean;
+  error?: string;
+}
+
+export const createBranchAccounts = onCall(
+  { region: "asia-northeast3", timeoutSeconds: 300, memory: "256MiB" },
+  async (request): Promise<{ results: CreateAccountResult[] }> => {
+    const callerUid = request.auth?.uid;
+    if (!callerUid) {
+      throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    }
+    const callerSnap = await db.doc(`users/${callerUid}`).get();
+    const caller = callerSnap.data();
+    if (!callerSnap.exists || caller?.role !== "admin" || caller?.status !== "active") {
+      throw new HttpsError("permission-denied", "관리자만 실행할 수 있습니다.");
+    }
+
+    const branches = request.data?.branches as CreateAccountInput[] | undefined;
+    if (!Array.isArray(branches) || branches.length === 0) {
+      throw new HttpsError("invalid-argument", "생성할 지점 목록이 비어 있습니다.");
+    }
+    if (branches.length > 60) {
+      throw new HttpsError("invalid-argument", "한 번에 최대 60개 지점까지 처리할 수 있습니다.");
+    }
+
+    const results: CreateAccountResult[] = [];
+
+    for (const b of branches) {
+      const branchId = String(b?.branchId ?? "").trim();
+      try {
+        const email = String(b?.email ?? "").trim().toLowerCase();
+        const branchName = String(b?.branchName ?? "").trim();
+        if (!branchId || !branchName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          results.push({ branchId, ok: false, error: "입력값이 올바르지 않습니다" });
+          continue;
+        }
+
+        const branchRef = db.doc(`branches/${branchId}`);
+        const branchSnap = await branchRef.get();
+        if (!branchSnap.exists) {
+          results.push({ branchId, ok: false, error: "지점 문서가 없습니다" });
+          continue;
+        }
+
+        // 1) Firebase Auth — 같은 이메일이 있으면 재사용, 없으면 생성 (비밀번호 미지정)
+        let uid: string;
+        let createdAuth = false;
+        try {
+          const existing = await admin.auth().getUserByEmail(email);
+          uid = existing.uid;
+        } catch {
+          const created = await admin.auth().createUser({
+            email,
+            displayName: branchName,
+            emailVerified: false,
+          });
+          uid = created.uid;
+          createdAuth = true;
+        }
+
+        // 2) users/{uid} 생성 또는 업데이트 (admin 계정은 강등하지 않음)
+        const userRef = db.doc(`users/${uid}`);
+        const userSnap = await userRef.get();
+        const now = admin.firestore.FieldValue.serverTimestamp();
+
+        if (userSnap.exists) {
+          const u = userSnap.data()!;
+          if (u.role === "admin") {
+            results.push({
+              branchId,
+              uid,
+              ok: false,
+              error: "해당 이메일은 admin 계정입니다 — 운영계정으로 사용할 수 없습니다",
+            });
+            continue;
+          }
+          await userRef.update({
+            role: "branch_manager",
+            status: "active",
+            branchIds: admin.firestore.FieldValue.arrayUnion(branchId),
+            updatedAt: now,
+          });
+        } else {
+          await userRef.set({
+            uid,
+            name: branchName,
+            email,
+            role: "branch_manager",
+            status: "active",
+            branchIds: [branchId],
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
+
+        // 3) branches/{branchId}.managerUids 연결 (arrayUnion — 중복 추가 없음)
+        await branchRef.update({
+          managerUids: admin.firestore.FieldValue.arrayUnion(uid),
+          updatedAt: now,
+        });
+
+        results.push({ branchId, uid, createdAuth, ok: true });
+      } catch (e) {
+        results.push({ branchId, ok: false, error: (e as Error).message });
+      }
+    }
+
+    return { results };
+  }
+);
 
 // ─── KakaoTalk i-builder v2 types ─────────────────────────────────────────────
 interface KakaoRequestBody {
