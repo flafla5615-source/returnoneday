@@ -140,6 +140,9 @@ export default function AdminUsersPage() {
   const [creatingAccounts, setCreatingAccounts] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [createResults, setCreateResults] = useState<BranchAccountResult[]>([]);
+  // 실수로 전 지점 계정이 한 번에 생성되지 않도록 기본값은 전체 미선택 —
+  // 체크한 지점만 "계정 생성"에 포함된다.
+  const [selectedForCreation, setSelectedForCreation] = useState<string[]>([]);
 
   // CSV upload
   const csvRef = useRef<HTMLInputElement>(null);
@@ -362,8 +365,8 @@ export default function AdminUsersPage() {
           ...acc,
           email: invites[acc.key]?.email?.trim() ?? "",
         }))
-        .filter((acc) => acc.email),
-    [operationalAccounts, invites]
+        .filter((acc) => acc.email && selectedForCreation.includes(acc.key)),
+    [operationalAccounts, invites, selectedForCreation]
   );
 
   const passwordError = useMemo(() => {
@@ -384,7 +387,7 @@ export default function AdminUsersPage() {
 
   async function handleCreateBranchAccounts() {
     if (accountCreationTargets.length === 0) {
-      setCreateError("이메일이 입력된 운영계정이 없습니다.");
+      setCreateError("생성할 지점을 표에서 선택하고, 이메일이 입력되어 있는지 확인해주세요.");
       return;
     }
     if (passwordError) {
@@ -433,6 +436,7 @@ export default function AdminUsersPage() {
       setCreateResults(nextResults);
       await refreshUserData();
       setShowPreview(false);
+      setSelectedForCreation([]);
     } catch (error) {
       console.error("[AdminUsers] create branch accounts failed", error);
       const message = (error as { message?: string }).message;
@@ -704,7 +708,7 @@ export default function AdminUsersPage() {
               className="flex items-center gap-1.5 px-3 py-2 text-xs bg-[#1e3a5f] text-white rounded-lg hover:bg-[#16304f]"
             >
               <CheckCircleIcon className="w-3.5 h-3.5" />
-              계정 생성 확인
+              계정 생성 확인 ({selectedForCreation.length}개 선택)
             </button>
           </div>
 
@@ -719,10 +723,35 @@ export default function AdminUsersPage() {
           )}
 
           {/* Manager table */}
+          <div className="flex items-center gap-2 text-xs text-gray-600">
+            <button
+              onClick={() =>
+                setSelectedForCreation(
+                  operationalAccounts
+                    .filter((acc) => (invites[acc.key]?.email ?? "").trim())
+                    .map((acc) => acc.key)
+                )
+              }
+              className="px-2.5 py-1 border border-gray-300 rounded-lg hover:bg-gray-50"
+            >
+              전체 선택
+            </button>
+            <button
+              onClick={() => setSelectedForCreation([])}
+              className="px-2.5 py-1 border border-gray-300 rounded-lg hover:bg-gray-50"
+            >
+              전체 해제
+            </button>
+            <span>선택됨: {selectedForCreation.length}개 지점</span>
+          </div>
+
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
-            <table className="w-full text-sm min-w-[720px]">
+            <table className="w-full text-sm min-w-[760px]">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
+                  <th className="px-4 py-3 text-left">
+                    <span className="sr-only">선택</span>
+                  </th>
                   {["운영 계정 (지점명)", "이메일", "상태", "담당 지점", "계정 연결", ""].map((h) => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500">
                       {h}
@@ -742,6 +771,22 @@ export default function AdminUsersPage() {
 
                   return (
                     <tr key={key} className="hover:bg-gray-50">
+                      {/* Select for creation */}
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedForCreation.includes(key)}
+                          disabled={!email}
+                          title={!email ? "이메일을 먼저 입력해주세요" : undefined}
+                          onChange={(e) =>
+                            setSelectedForCreation((prev) =>
+                              e.target.checked ? [...prev, key] : prev.filter((k) => k !== key)
+                            )
+                          }
+                          className="rounded border-gray-300 disabled:opacity-30"
+                        />
+                      </td>
+
                       {/* Name */}
                       <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">
                         {name}
@@ -1030,6 +1075,21 @@ export default function AdminUsersPage() {
                 ))}
               </div>
             )}
+
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-1">
+              <p className="text-xs font-medium text-blue-800">
+                이번에 실제로 생성/연결될 지점 ({accountCreationTargets.length}개)
+              </p>
+              {accountCreationTargets.length === 0 ? (
+                <p className="text-xs text-blue-600">
+                  선택된 지점이 없습니다. 표에서 체크박스로 지점을 선택해주세요.
+                </p>
+              ) : (
+                <p className="text-xs text-blue-700">
+                  {accountCreationTargets.map((t) => t.name).join(", ")}
+                </p>
+              )}
+            </div>
 
             <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-xs text-yellow-800">
               {creationMethod === "temporary_password"
