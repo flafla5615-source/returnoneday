@@ -6,6 +6,7 @@ import { getAllUsers, updateUserProfileWithBranchAssignments } from "@/services/
 import { getAllManagerInvites, upsertManagerInvite } from "@/services/managerInvites";
 import {
   createBranchAccounts,
+  setBranchAccountPassword,
   type BranchAccountCreationMethod,
   type BranchAccountResult,
 } from "@/services/branchAccounts";
@@ -22,6 +23,8 @@ import {
   SaveIcon,
   XIcon,
   BuildingIcon,
+  KeyRoundIcon,
+  LockIcon,
 } from "lucide-react";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -93,6 +96,24 @@ function validateStrongPassword(password: string): string | null {
   return null;
 }
 
+function validateResetPassword(password: string, confirm: string): string | null {
+  if (!password || !confirm) return "비밀번호를 입력해주세요.";
+  const strength = validateStrongPassword(password);
+  if (strength) return strength;
+  if (password !== confirm) return "비밀번호가 일치하지 않습니다.";
+  return null;
+}
+
+function resetPasswordErrorMessage(error: unknown): string {
+  const code = (error as { code?: string })?.code ?? "";
+  if (code.includes("permission-denied")) return "권한이 없습니다.";
+  if (code.includes("not-found")) return "대상 계정을 찾을 수 없습니다.";
+  if (code.includes("failed-precondition")) return "지점 운영계정만 변경할 수 있습니다.";
+  if (code.includes("invalid-argument")) return "비밀번호 조건을 확인해주세요.";
+  if (code.includes("unauthenticated")) return "다시 로그인 후 시도해주세요.";
+  return "잠시 후 다시 시도해주세요.";
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function AdminUsersPage() {
@@ -130,6 +151,14 @@ export default function AdminUsersPage() {
   const [editStatus, setEditStatus] = useState<UserStatus>("pending");
   const [editBranchIds, setEditBranchIds] = useState<string[]>([]);
   const [editSaving, setEditSaving] = useState(false);
+
+  // Branch account password reset (admin 전용)
+  const [pwTarget, setPwTarget] = useState<{ uid: string; email: string; branchName: string } | null>(null);
+  const [pwValue, setPwValue] = useState("");
+  const [pwConfirm, setPwConfirm] = useState("");
+  const [pwError, setPwError] = useState<string | null>(null);
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwSuccessNotice, setPwSuccessNotice] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([getAllBranches(), getAllUsers(), getAllManagerInvites()]).then(
@@ -478,6 +507,48 @@ export default function AdminUsersPage() {
     );
   }
 
+  // ── Branch account password reset ──────────────────────────────────────────
+
+  function openPasswordModal(target: { uid: string; email: string; branchName: string }) {
+    setPwTarget(target);
+    setPwValue("");
+    setPwConfirm("");
+    setPwError(null);
+  }
+
+  function closePasswordModal() {
+    setPwTarget(null);
+    setPwValue("");
+    setPwConfirm("");
+    setPwError(null);
+  }
+
+  async function submitPasswordReset() {
+    if (!pwTarget) return;
+    const validationError = validateResetPassword(pwValue, pwConfirm);
+    if (validationError) {
+      setPwError(validationError);
+      return;
+    }
+
+    setPwSaving(true);
+    setPwError(null);
+    try {
+      await setBranchAccountPassword({
+        targetUid: pwTarget.uid,
+        newPassword: pwValue,
+      });
+      closePasswordModal();
+      setPwSuccessNotice("비밀번호가 변경되었습니다.");
+      setTimeout(() => setPwSuccessNotice(null), 4000);
+    } catch (error) {
+      console.error("[AdminUsers] password reset failed", error);
+      setPwError(resetPasswordErrorMessage(error));
+    } finally {
+      setPwSaving(false);
+    }
+  }
+
   if (loading) return <LoadingState />;
 
   return (
@@ -641,6 +712,12 @@ export default function AdminUsersPage() {
             <CreationResultsTable results={createResults} />
           )}
 
+          {pwSuccessNotice && (
+            <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+              {pwSuccessNotice}
+            </p>
+          )}
+
           {/* Manager table */}
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
             <table className="w-full text-sm min-w-[720px]">
@@ -768,13 +845,26 @@ export default function AdminUsersPage() {
                             </button>
                           </div>
                         ) : (
-                          <button
-                            onClick={() => startEdit(key)}
-                            className="p-1.5 rounded hover:bg-gray-100 text-gray-500"
-                            title="이메일 수정"
-                          >
-                            <EditIcon className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex gap-1">
+                            <button
+                              onClick={() => startEdit(key)}
+                              className="p-1.5 rounded hover:bg-gray-100 text-gray-500"
+                              title="이메일 수정"
+                            >
+                              <EditIcon className="w-3.5 h-3.5" />
+                            </button>
+                            {matchedUser && matchedUser.role === "branch_manager" && (
+                              <button
+                                onClick={() =>
+                                  openPasswordModal({ uid: matchedUser.uid, email, branchName: name })
+                                }
+                                className="p-1.5 rounded hover:bg-gray-100 text-gray-500"
+                                title="비밀번호 재설정"
+                              >
+                                <KeyRoundIcon className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -1053,6 +1143,84 @@ export default function AdminUsersPage() {
                 className="px-4 py-2 text-sm bg-[#1e3a5f] text-white rounded-lg hover:bg-[#16304f] disabled:opacity-50"
               >
                 {editSaving ? "저장 중..." : "저장"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 지점 운영계정 비밀번호 변경 모달 (admin 전용) ──────────────────────── */}
+      {pwTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40" onClick={closePasswordModal} />
+          <div className="relative bg-white rounded-xl shadow-xl p-6 w-full max-w-md space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                <LockIcon className="w-4 h-4 text-gray-500" />
+                지점 운영계정 비밀번호 설정
+              </h3>
+              <button onClick={closePasswordModal} className="text-gray-400 hover:text-gray-600">
+                <XIcon className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="bg-gray-50 rounded-lg p-3 space-y-1">
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">지점명</span>
+                <span className="text-gray-900 font-medium">{pwTarget.branchName}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">운영계정 이메일</span>
+                <span className="text-gray-900 font-medium">{pwTarget.email}</span>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-gray-700 block mb-1">새 비밀번호</label>
+              <input
+                type="password"
+                value={pwValue}
+                onChange={(e) => { setPwValue(e.target.value); setPwError(null); }}
+                autoComplete="new-password"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-700 block mb-1">새 비밀번호 확인</label>
+              <input
+                type="password"
+                value={pwConfirm}
+                onChange={(e) => { setPwConfirm(e.target.value); setPwError(null); }}
+                autoComplete="new-password"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]"
+              />
+            </div>
+
+            <p className="text-xs text-gray-500">
+              비밀번호는 8자 이상이며 영문, 숫자, 특수문자를 각각 1개 이상 포함해야 합니다.
+            </p>
+            <p className="text-xs text-gray-400">
+              비밀번호는 본사에서 관리하며 저장되지 않습니다. 변경 후 지점 담당자에게 별도로 전달해주세요.
+            </p>
+
+            {pwError && (
+              <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{pwError}</p>
+            )}
+
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={closePasswordModal}
+                className="px-4 py-2 text-sm border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+              >
+                취소
+              </button>
+              <button
+                onClick={submitPasswordReset}
+                disabled={pwSaving}
+                className="flex items-center gap-1.5 px-4 py-2 text-sm bg-[#1e3a5f] text-white rounded-lg hover:bg-[#16304f] disabled:opacity-50"
+              >
+                <KeyRoundIcon className="w-3.5 h-3.5" />
+                {pwSaving ? "변경 중..." : "비밀번호 변경"}
               </button>
             </div>
           </div>

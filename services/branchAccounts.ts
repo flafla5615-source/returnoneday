@@ -39,3 +39,30 @@ export async function createBranchAccounts(params: {
   const response = await callable(params);
   return response.data.results;
 }
+
+// ── 지점 운영계정 비밀번호 관리 (admin 전용) ─────────────────────────────────
+// 비밀번호는 Firestore/CSV/로그/화면 결과 어디에도 저장·노출하지 않는다.
+// 이 함수는 값을 서버로 전달만 하고, 응답에는 비밀번호를 포함하지 않는다.
+
+export type SetBranchAccountPasswordParams = {
+  targetUid?: string;
+  email?: string;
+  newPassword: string;
+};
+
+export type SetBranchAccountPasswordResult = {
+  success: true;
+  uid: string;
+};
+
+export async function setBranchAccountPassword(
+  params: SetBranchAccountPasswordParams
+): Promise<SetBranchAccountPasswordResult> {
+  const callable = httpsCallable<
+    SetBranchAccountPasswordParams,
+    SetBranchAccountPasswordResult
+  >(functions, "setBranchAccountPassword");
+
+  const response = await callable(params);
+  return response.data;
+}

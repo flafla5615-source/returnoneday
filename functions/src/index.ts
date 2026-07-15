@@ -223,6 +223,82 @@ export const createBranchAccounts = onCall(
   }
 );
 
+// ─── 지점 운영계정 비밀번호 변경 (admin 전용) ────────────────────────────────
+// 비밀번호는 Firestore에 저장하지 않고 Firebase Auth에만 반영한다.
+// console/오류 메시지/응답 어디에도 비밀번호 원문을 남기지 않는다.
+
+export const setBranchAccountPassword = onCall(
+  { region: "asia-northeast3", timeoutSeconds: 30, memory: "256MiB" },
+  async (request) => {
+    // 1~4. 호출자 인증 + admin + active 확인
+    await requireAdmin(request.auth?.uid);
+
+    const targetUid =
+      typeof request.data?.targetUid === "string" ? request.data.targetUid.trim() : "";
+    const email =
+      typeof request.data?.email === "string"
+        ? request.data.email.trim().toLowerCase()
+        : "";
+    const newPassword = String(request.data?.newPassword ?? "");
+
+    if (!targetUid && !email) {
+      throw new HttpsError("invalid-argument", "대상 계정을 지정해주세요.");
+    }
+    if (!validPassword(newPassword)) {
+      throw new HttpsError("invalid-argument", "비밀번호 조건을 확인해주세요.");
+    }
+
+    // 5. targetUid 우선 사용, email도 함께 왔으면 일치 여부를 명확히 검증
+    let authUser: admin.auth.UserRecord;
+    try {
+      if (targetUid) {
+        authUser = await admin.auth().getUser(targetUid);
+        if (email && authUser.email?.toLowerCase() !== email) {
+          throw new HttpsError(
+            "invalid-argument",
+            "targetUid와 email이 서로 다른 계정을 가리킵니다."
+          );
+        }
+      } else {
+        authUser = await admin.auth().getUserByEmail(email);
+      }
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      const code = (error as { code?: string }).code;
+      if (code === "auth/user-not-found") {
+        throw new HttpsError("not-found", "대상 계정을 찾을 수 없습니다.");
+      }
+      console.error("[setBranchAccountPassword] lookup failed", { targetUid, email, code });
+      throw new HttpsError("internal", "대상 계정 조회 중 오류가 발생했습니다.");
+    }
+
+    // 6~8. 대상 users 문서 확인 — branch_manager만 허용, admin 계정은 제외
+    const targetUserRef = db.doc(`users/${authUser.uid}`);
+    const targetUserSnap = await targetUserRef.get();
+    const targetUser = targetUserSnap.data();
+
+    if (!targetUserSnap.exists || !targetUser) {
+      throw new HttpsError("not-found", "대상 계정 정보를 찾을 수 없습니다.");
+    }
+    if (targetUser.role === "admin") {
+      throw new HttpsError("failed-precondition", "관리자 계정은 이 기능으로 변경할 수 없습니다.");
+    }
+    if (targetUser.role !== "branch_manager") {
+      throw new HttpsError("failed-precondition", "지점 운영계정만 변경할 수 있습니다.");
+    }
+
+    // 10. Firebase Admin SDK로 비밀번호 변경 (Firestore에는 기록하지 않음)
+    try {
+      await admin.auth().updateUser(authUser.uid, { password: newPassword });
+    } catch {
+      console.error("[setBranchAccountPassword] updateUser failed", { uid: authUser.uid });
+      throw new HttpsError("internal", "비밀번호 변경 중 오류가 발생했습니다.");
+    }
+
+    return { success: true, uid: authUser.uid };
+  }
+);
+
 // ─── KakaoTalk i-builder v2 types ─────────────────────────────────────────────
 interface KakaoRequestBody {
   userRequest?: { utterance?: string };
