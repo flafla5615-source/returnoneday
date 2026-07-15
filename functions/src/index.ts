@@ -149,6 +149,8 @@ export const createBranchAccounts = onCall(
           continue;
         }
 
+        // 비밀번호는 Firestore에 저장하지 않는다. 초기 비밀번호는 admin이 관리하며,
+        // branch_manager에게 변경을 강제하지 않으므로 mustChangePassword는 기록하지 않는다.
         if (existingUserProfile.exists) {
           await userRef.update({
             name: branchName,
@@ -158,7 +160,6 @@ export const createBranchAccounts = onCall(
             active: true,
             branchIds: admin.firestore.FieldValue.arrayUnion(branchId),
             updatedAt: now,
-            ...(authUser.initialPasswordSet ? { mustChangePassword: true } : {}),
           });
         } else {
           await userRef.set({
@@ -169,7 +170,6 @@ export const createBranchAccounts = onCall(
             status: "active",
             active: true,
             branchIds: [branchId],
-            mustChangePassword: authUser.initialPasswordSet,
             createdAt: now,
             updatedAt: now,
           });

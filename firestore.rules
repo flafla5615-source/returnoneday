@@ -170,7 +170,7 @@ service cloud.firestore {
       allow create: if isAuth() && uid() == userId
         && request.resource.data.keys().hasOnly([
           'uid', 'name', 'email', 'role', 'status', 'active', 'branchIds',
-          'mustChangePassword', 'createdAt', 'updatedAt'
+          'createdAt', 'updatedAt'
         ])
         && request.resource.data.uid == uid()
         && request.resource.data.role == 'branch_manager'

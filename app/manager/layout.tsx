@@ -17,11 +17,10 @@ export default function ManagerLayout({ children }: { children: React.ReactNode 
     if (profile.status === "pending") { router.replace("/pending"); return; }
     if (profile.status === "suspended") { router.replace("/login"); return; }
     if (profile.role === "admin") { router.replace("/admin"); return; }
-    if (profile.mustChangePassword) { router.replace("/change-password"); return; }
   }, [user, profile, loading, router]);
 
   if (loading || !profile) return <LoadingState />;
-  if (profile.status !== "active" || profile.role !== "branch_manager" || profile.mustChangePassword) return null;
+  if (profile.status !== "active" || profile.role !== "branch_manager") return null;
 
   return <AppShell role="branch_manager">{children}</AppShell>;
 }

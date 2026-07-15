@@ -4,7 +4,6 @@ import {
   signOut,
   sendPasswordResetEmail,
   onAuthStateChanged,
-  updatePassword,
   type User,
 } from "firebase/auth";
 import {
@@ -51,13 +50,9 @@ export async function logOut(): Promise<void> {
   await signOut(auth);
 }
 
+// 지점 운영계정 비밀번호는 본사 admin이 관리한다 — branch_manager 자기 비밀번호 변경 기능은 제공하지 않는다.
 export async function resetPassword(email: string): Promise<void> {
   await sendPasswordResetEmail(auth, email);
-}
-
-export async function changeCurrentUserPassword(password: string): Promise<void> {
-  if (!auth.currentUser) throw new Error("requires-recent-login");
-  await updatePassword(auth.currentUser, password);
 }
 
 export async function getUserProfile(uid: string): Promise<UserProfile | null> {

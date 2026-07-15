@@ -13,7 +13,6 @@ export interface UserProfile {
   status: UserStatus;
   active?: boolean;
   branchIds: string[];
-  mustChangePassword?: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

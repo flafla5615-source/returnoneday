@@ -15,7 +15,6 @@ export default function PendingPage() {
     if (!user) { router.replace("/login"); return; }
     if (profile?.status === "active") {
       if (profile.role === "admin") router.replace("/admin");
-      else if (profile.mustChangePassword) router.replace("/change-password");
       else router.replace("/manager");
     }
   }, [user, profile, loading, router]);

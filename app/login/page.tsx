@@ -88,8 +88,6 @@ export default function LoginPage() {
       }
       if (profile.role === "admin") {
         router.push("/admin");
-      } else if (profile.mustChangePassword) {
-        router.push("/change-password");
       } else {
         router.push("/manager");
       }
