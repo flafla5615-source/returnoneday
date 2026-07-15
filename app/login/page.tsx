@@ -183,6 +183,10 @@ export default function LoginPage() {
               </Link>
             </div>
 
+            <p className="text-xs text-gray-400 leading-relaxed">
+              지점 운영계정 비밀번호 변경은 본사 관리자에게 요청해주세요.
+            </p>
+
             {authError && (
               <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{authError}</p>
             )}
