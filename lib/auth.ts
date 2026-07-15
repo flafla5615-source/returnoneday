@@ -4,6 +4,7 @@ import {
   signOut,
   sendPasswordResetEmail,
   onAuthStateChanged,
+  updatePassword,
   type User,
 } from "firebase/auth";
 import {
@@ -52,6 +53,11 @@ export async function logOut(): Promise<void> {
 
 export async function resetPassword(email: string): Promise<void> {
   await sendPasswordResetEmail(auth, email);
+}
+
+export async function changeCurrentUserPassword(password: string): Promise<void> {
+  if (!auth.currentUser) throw new Error("requires-recent-login");
+  await updatePassword(auth.currentUser, password);
 }
 
 export async function getUserProfile(uid: string): Promise<UserProfile | null> {

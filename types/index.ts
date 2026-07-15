@@ -11,7 +11,9 @@ export interface UserProfile {
   email: string;
   role: UserRole;
   status: UserStatus;
+  active?: boolean;
   branchIds: string[];
+  mustChangePassword?: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

@@ -163,18 +163,21 @@ service cloud.firestore {
       allow update: if isAdmin() ||
         (isAuth() && uid() == userId
           && !request.resource.data.diff(resource.data).affectedKeys()
-              .hasAny(['role', 'status', 'branchIds']));
+              .hasAny(['role', 'status', 'active', 'branchIds'])
+          && !('password' in request.resource.data));
 
       // New user creates own document on signup — must be branch_manager/pending
       allow create: if isAuth() && uid() == userId
         && request.resource.data.keys().hasOnly([
-          'uid', 'name', 'email', 'role', 'status', 'branchIds', 'createdAt', 'updatedAt'
+          'uid', 'name', 'email', 'role', 'status', 'active', 'branchIds',
+          'mustChangePassword', 'createdAt', 'updatedAt'
         ])
         && request.resource.data.uid == uid()
         && request.resource.data.role == 'branch_manager'
         && request.resource.data.status == 'pending'
         && request.resource.data.branchIds is list
-        && request.resource.data.branchIds.size() == 0;
+        && request.resource.data.branchIds.size() == 0
+        && !('password' in request.resource.data);
 
       allow delete: if isAdmin();
     }

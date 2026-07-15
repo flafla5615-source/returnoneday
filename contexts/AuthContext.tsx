@@ -11,6 +11,7 @@ interface AuthContextValue {
   profile: UserProfile | null;
   loading: boolean;
   profileError: string | null;
+  refreshProfile: () => Promise<UserProfile | null>;
 }
 
 const AuthContext = createContext<AuthContextValue>({
@@ -18,6 +19,7 @@ const AuthContext = createContext<AuthContextValue>({
   profile: null,
   loading: true,
   profileError: null,
+  refreshProfile: async () => null,
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -25,6 +27,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [profileError, setProfileError] = useState<string | null>(null);
+
+  async function refreshProfile(): Promise<UserProfile | null> {
+    if (!auth.currentUser) {
+      setProfile(null);
+      return null;
+    }
+    const nextProfile = await getUserProfile(auth.currentUser.uid);
+    setProfile(nextProfile);
+    return nextProfile;
+  }
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -51,7 +63,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, profileError }}>
+    <AuthContext.Provider value={{ user, profile, loading, profileError, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );
