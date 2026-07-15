@@ -7,7 +7,7 @@ import { getAllBranches } from "@/services/branches";
 import { getAllCampaigns, getCampaignResultsByDateRange } from "@/services/campaigns";
 import { getAllIssues } from "@/services/issues";
 import { getAllReports } from "@/services/reports";
-import { getAllTrainerDailyReportsByPeriod } from "@/services/trainerDailyReports";
+import { getAllTrainerSessionsByPeriod } from "@/services/trainerSessions";
 import { getAllTrainers } from "@/services/trainers";
 import { getAllUsers } from "@/services/users";
 import { calcPtConversionRate, formatDate, todayYMD, getExpiringTmTotal, getUnregisteredTmTotal, getOfflinePromoTotal } from "@/lib/utils";
@@ -19,7 +19,7 @@ import type {
   DailyReport,
   Issue,
   ReportStatus,
-  TrainerDailyReport,
+  TrainerSession,
   UserProfile,
 } from "@/types";
 
@@ -239,7 +239,7 @@ export default function AdminExportPage() {
         getAllIssues({ fromDate, toDate }),
         getAllCampaigns(),
         getCampaignResultsByDateRange(fromDate, toDate),
-        getAllTrainerDailyReportsByPeriod(fromDate, toDate),
+        getAllTrainerSessionsByPeriod(fromDate, toDate),
         getAllTrainers(),
       ]);
 
@@ -285,7 +285,7 @@ export default function AdminExportPage() {
       );
       const filteredTrainerReports = trainerReports.filter((r) => {
         if (r.isTestData === true) return false;
-        if (!validReportKeys.has(`${r.branchId}_${r.reportDate}`)) return false;
+        if (!validReportKeys.has(`${r.branchId}_${r.date}`)) return false;
         const branch = branchMap[r.branchId];
         if (!branch) return false;
         if (selectedBranch && r.branchId !== selectedBranch) return false;
@@ -416,11 +416,11 @@ export default function AdminExportPage() {
       }
 
       if (filteredTrainerReports.length > 0) {
-        const pt = (r: TrainerDailyReport) => r.ptSessionCount ?? 0;
-        const ot = (r: TrainerDailyReport) => r.otSessionCount ?? 0;
-        const grp = (r: TrainerDailyReport) => r.groupSessionCount ?? 0;
-        const oth = (r: TrainerDailyReport) => r.otherSessionCount ?? 0;
-        const tot = (r: TrainerDailyReport) => r.totalSessionCount ?? 0;
+        const pt = (r: TrainerSession) => r.ptSessionCount ?? 0;
+        const ot = (r: TrainerSession) => r.otSessionCount ?? 0;
+        const grp = (r: TrainerSession) => r.groupSessionCount ?? 0;
+        const oth = (r: TrainerSession) => r.otherSessionCount ?? 0;
+        const tot = (r: TrainerSession) => r.totalSessionCount ?? 0;
 
         // 시트 1: 트레이너 세션 월 누적 (지점 × 트레이너 기준, 기간 내 합산)
         const monthlySheet = workbook.addWorksheet("트레이너 세션 월 누적");
@@ -450,7 +450,7 @@ export default function AdminExportPage() {
           agg.group += grp(r);
           agg.other += oth(r);
           agg.total += tot(r);
-          agg.days.add(r.reportDate);
+          agg.days.add(r.date);
         });
 
         Array.from(aggMap.values())
@@ -480,14 +480,14 @@ export default function AdminExportPage() {
 
         [...filteredTrainerReports]
           .sort((a, b) =>
-            a.reportDate !== b.reportDate
-              ? a.reportDate.localeCompare(b.reportDate)
+            a.date !== b.date
+              ? a.date.localeCompare(b.date)
               : a.branchId.localeCompare(b.branchId)
           )
           .forEach((r) => {
             const branch = branchMap[r.branchId];
             dailySheet.addRow({
-              date: formatDate(r.reportDate),
+              date: formatDate(r.date),
               brand: branch?.brand ?? "",
               branchName: branch?.name ?? r.branchId,
               trainerName: trainerNameMap[r.trainerId] ?? r.trainerName,

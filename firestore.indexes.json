@@ -114,6 +114,14 @@
         { "fieldPath": "trainerId", "order": "ASCENDING" },
         { "fieldPath": "reportDate", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "trainerSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "branchId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

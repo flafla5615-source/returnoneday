@@ -4,20 +4,20 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { format, startOfMonth } from "date-fns";
 import { getAllBranchesIncludingInactive } from "@/services/branches";
 import { getAllTrainers } from "@/services/trainers";
-import { getAllTrainerDailyReportsByPeriod } from "@/services/trainerDailyReports";
+import { getAllTrainerSessionsByPeriod } from "@/services/trainerSessions";
 import { getAllReports } from "@/services/reports";
 import KpiCard from "@/components/dashboard/KpiCard";
 import { cn, todayYMD, formatDate } from "@/lib/utils";
-import type { Branch, Trainer, TrainerDailyReport } from "@/types";
+import type { Branch, Trainer, TrainerSession } from "@/types";
 import { ChevronDownIcon, ChevronRightIcon, XIcon } from "lucide-react";
 
-const ptOf = (r: TrainerDailyReport) => r.ptSessionCount ?? 0;
-const otOf = (r: TrainerDailyReport) => r.otSessionCount ?? 0;
-const groupOf = (r: TrainerDailyReport) => r.groupSessionCount ?? 0;
-const otherOf = (r: TrainerDailyReport) => r.otherSessionCount ?? 0;
-const totalOf = (r: TrainerDailyReport) => r.totalSessionCount ?? 0;
+const ptOf = (r: TrainerSession) => r.ptSessionCount ?? 0;
+const otOf = (r: TrainerSession) => r.otSessionCount ?? 0;
+const groupOf = (r: TrainerSession) => r.groupSessionCount ?? 0;
+const otherOf = (r: TrainerSession) => r.otherSessionCount ?? 0;
+const totalOf = (r: TrainerSession) => r.totalSessionCount ?? 0;
 
-function sumSessions(reports: TrainerDailyReport[]) {
+function sumSessions(reports: TrainerSession[]) {
   let pt = 0, ot = 0, group = 0, other = 0, total = 0;
   for (const r of reports) {
     pt += ptOf(r);
@@ -38,7 +38,7 @@ export default function TrainerSessionSection() {
 
   const [branches, setBranches] = useState<Branch[]>([]);
   const [trainers, setTrainers] = useState<Trainer[]>([]);
-  const [reports, setReports] = useState<TrainerDailyReport[]>([]);
+  const [reports, setReports] = useState<TrainerSession[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Drilldown: card → scope, branch row → trainers, trainer row → dates
@@ -54,7 +54,7 @@ export default function TrainerSessionSection() {
         const [bs, ts, trainerReports, dailyReports] = await Promise.all([
           getAllBranchesIncludingInactive(),
           getAllTrainers(),
-          getAllTrainerDailyReportsByPeriod(monthFrom, today),
+          getAllTrainerSessionsByPeriod(monthFrom, today),
           getAllReports(monthFrom, today),
         ]);
         if (cancelled) return;
@@ -73,7 +73,7 @@ export default function TrainerSessionSection() {
           trainerReports.filter(
             (r) =>
               !r.isTestData &&
-              validKeys.has(`${r.branchId}_${r.reportDate}`) &&
+              validKeys.has(`${r.branchId}_${r.date}`) &&
               activeBranchIds.has(r.branchId)
           )
         );
@@ -102,11 +102,11 @@ export default function TrainerSessionSection() {
 
   const trainerNameOf = useMemo(() => {
     const m = new Map(trainers.map((t) => [t.id, t.name]));
-    return (r: TrainerDailyReport) => m.get(r.trainerId) ?? r.trainerName;
+    return (r: TrainerSession) => m.get(r.trainerId) ?? r.trainerName;
   }, [trainers]);
 
   const todayReports = useMemo(
-    () => reports.filter((r) => r.reportDate === today),
+    () => reports.filter((r) => r.date === today),
     [reports, today]
   );
 
@@ -157,7 +157,7 @@ export default function TrainerSessionSection() {
     if (!openTrainerId) return [];
     return scopeReports
       .filter((r) => r.trainerId === openTrainerId && r.branchId === openBranchId)
-      .sort((a, b) => a.reportDate.localeCompare(b.reportDate));
+      .sort((a, b) => a.date.localeCompare(b.date));
   }, [scopeReports, openTrainerId, openBranchId]);
 
   function toggleScope(scope: Scope) {
@@ -302,7 +302,7 @@ export default function TrainerSessionSection() {
                                                 <tbody className="divide-y divide-gray-50">
                                                   {dateRows.map((r) => (
                                                     <tr key={r.id}>
-                                                      <td className="px-2 py-1 text-gray-600 whitespace-nowrap">{formatDate(r.reportDate)}</td>
+                                                      <td className="px-2 py-1 text-gray-600 whitespace-nowrap">{formatDate(r.date)}</td>
                                                       <td className="px-2 py-1 text-gray-600">{branchNameOf(r.branchId)}</td>
                                                       <td className="px-2 py-1 text-gray-600">{ptOf(r)}회</td>
                                                       <td className="px-2 py-1 text-gray-600">{otOf(r)}회</td>

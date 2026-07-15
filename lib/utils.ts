@@ -125,6 +125,23 @@ export function formatPhoneNumber(value: unknown): string {
   return digits || "-";
 }
 
+// ─── Trainer helpers ─────────────────────────────────────────────────────────
+// 트레이너는 전사 공용이라 이름만으로는 동명이인을 구분할 수 없다.
+// 전화번호 뒤 4자리 → 식별 메모 → 최초 등록 지점 순으로 표시할 식별 정보를 고른다.
+
+export function trainerIdentifierLabel(
+  trainer: { phoneLast4?: string; identifierMemo?: string; firstRegisteredBranchId?: string },
+  branchNameOf?: (id: string) => string
+): string {
+  if (trainer.phoneLast4) return `전화번호 끝 ${trainer.phoneLast4}`;
+  if (trainer.identifierMemo) return trainer.identifierMemo;
+  if (trainer.firstRegisteredBranchId) {
+    const name = branchNameOf ? branchNameOf(trainer.firstRegisteredBranchId) : trainer.firstRegisteredBranchId;
+    return `최초 등록 ${name}`;
+  }
+  return "";
+}
+
 // ─── TM & Promotion aggregation helpers ─────────────────────────────────────
 
 type TmLike = { phone: number; sms: number; kakao: number; other: number };

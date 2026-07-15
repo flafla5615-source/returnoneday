@@ -10,9 +10,10 @@ import { getIssuesByReport, upsertIssues } from "@/services/issues";
 import { getActiveCampaigns, upsertCampaignResult, getCampaignResultByReport } from "@/services/campaigns";
 import { getAllTrainers } from "@/services/trainers";
 import {
-  upsertTrainerDailyReport,
-  getTrainerDailyReportsByBranchAndDate,
-} from "@/services/trainerDailyReports";
+  upsertTrainerSession,
+  getTrainerSessionsByBranchAndDate,
+} from "@/services/trainerSessions";
+import TrainerSearchPicker from "@/components/trainers/TrainerSearchPicker";
 import ReportStepper from "@/components/reports/ReportStepper";
 import AutosaveIndicator from "@/components/reports/AutosaveIndicator";
 import NumberInput from "@/components/reports/NumberInput";
@@ -80,8 +81,10 @@ export default function NewReportPage() {
   const [submitOpen, setSubmitOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitError, setSubmitError] = useState("");
-  const [branchTrainers, setBranchTrainers] = useState<Trainer[]>([]);
+  const [allActiveTrainers, setAllActiveTrainers] = useState<Trainer[]>([]);
   const [trainerPerfs, setTrainerPerfs] = useState<TrainerPerfState[]>([]);
+  // 저장 시 목록에서 제거된 트레이너의 기존 세션을 0회로 반영하기 위한 원본 스냅샷
+  const [originalSessions, setOriginalSessions] = useState<{ trainerId: string; trainerName: string }[]>([]);
   const [actualWriterName, setActualWriterName] = useState("");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -195,6 +198,28 @@ export default function NewReportPage() {
     );
   }
 
+  function handleAddTrainer(trainer: Trainer) {
+    setTrainerPerfs((prev) => {
+      if (prev.some((p) => p.trainerId === trainer.id)) return prev;
+      return [
+        ...prev,
+        {
+          trainerId: trainer.id,
+          trainerName: trainer.name,
+          ptSessionCount: 0,
+          otSessionCount: 0,
+          groupSessionCount: 0,
+          otherSessionCount: 0,
+          memo: "",
+        },
+      ];
+    });
+  }
+
+  function handleRemoveTrainer(trainerId: string) {
+    setTrainerPerfs((prev) => prev.filter((p) => p.trainerId !== trainerId));
+  }
+
   const applyIssues = useCallback((reportIssues: Issue[]) => {
     const issueMap = new Map(reportIssues.map((issue) => [issue.type, issue]));
     setIssues((["claim", "staff", "facility"] as Issue["type"][]).map((type) => {
@@ -235,12 +260,12 @@ export default function NewReportPage() {
 
     async function loadReportContext() {
       try {
-        const [ex, yd, cps, allTrainers, existingTrainerReports] = await Promise.all([
+        const [ex, yd, cps, allTrainers, existingSessions] = await Promise.all([
           getReport(selectedBranchId, reportDate),
           getReport(selectedBranchId, ymd),
           getActiveCampaigns(selectedBranchId),
           getAllTrainers(),
-          getTrainerDailyReportsByBranchAndDate(selectedBranchId, reportDate),
+          getTrainerSessionsByBranchAndDate(selectedBranchId, reportDate),
         ]);
         let reportIssues: Issue[] = [];
         if (ex) {
@@ -252,25 +277,22 @@ export default function NewReportPage() {
         }
         if (cancelled) return;
 
-        // Trainer setup
-        const filteredTrainers = allTrainers.filter(
-          (t) => t.active && t.branchIds.includes(selectedBranchId)
-        );
-        const existingPerfMap = new Map(existingTrainerReports.map((r) => [r.trainerId, r]));
-        setBranchTrainers(filteredTrainers);
+        // Trainer setup — 트레이너는 전사 공용이므로 지점으로 필터링하지 않는다.
+        // 지점 변경/재조회 시 이전 지점의 입력값이 남지 않도록 항상 새로 덮어쓴다.
+        setAllActiveTrainers(allTrainers.filter((t) => t.active));
         setTrainerPerfs(
-          filteredTrainers.map((t) => {
-            const ep = existingPerfMap.get(t.id);
-            return {
-              trainerId: t.id,
-              trainerName: t.name,
-              ptSessionCount: ep?.ptSessionCount ?? 0,
-              otSessionCount: ep?.otSessionCount ?? 0,
-              groupSessionCount: ep?.groupSessionCount ?? 0,
-              otherSessionCount: ep?.otherSessionCount ?? 0,
-              memo: ep?.memo ?? "",
-            };
-          })
+          existingSessions.map((s) => ({
+            trainerId: s.trainerId,
+            trainerName: s.trainerName,
+            ptSessionCount: s.ptSessionCount,
+            otSessionCount: s.otSessionCount,
+            groupSessionCount: s.groupSessionCount,
+            otherSessionCount: s.otherSessionCount,
+            memo: s.memo ?? "",
+          }))
+        );
+        setOriginalSessions(
+          existingSessions.map((s) => ({ trainerId: s.trainerId, trainerName: s.trainerName }))
         );
 
         setYesterday(yd);
@@ -425,13 +447,13 @@ export default function NewReportPage() {
         }
       }
 
-      // Save trainer daily reports (session counts)
+      // Save trainer sessions
       const trainerErrors: string[] = [];
       for (const perf of trainerPerfs) {
         try {
-          await upsertTrainerDailyReport({
+          await upsertTrainerSession({
             branchId: selectedBranchId,
-            reportDate,
+            date: reportDate,
             trainerId: perf.trainerId,
             trainerName: perf.trainerName,
             ptSessionCount: perf.ptSessionCount,
@@ -439,15 +461,40 @@ export default function NewReportPage() {
             groupSessionCount: perf.groupSessionCount,
             otherSessionCount: perf.otherSessionCount,
             memo: perf.memo,
-            writerUid: user.uid,
+            createdBy: user.uid,
           });
         } catch (tErr) {
-          console.error(`trainer report save failed: ${perf.trainerName}`, tErr);
+          console.error(`trainer session save failed: ${perf.trainerName}`, tErr);
           trainerErrors.push(perf.trainerName);
         }
       }
+
+      // 목록에서 제거한 트레이너는 문서를 삭제하지 않고 0회로 갱신한다.
+      const removedTrainers = originalSessions.filter(
+        (o) => !trainerPerfs.some((p) => p.trainerId === o.trainerId)
+      );
+      for (const removed of removedTrainers) {
+        try {
+          await upsertTrainerSession({
+            branchId: selectedBranchId,
+            date: reportDate,
+            trainerId: removed.trainerId,
+            trainerName: removed.trainerName,
+            ptSessionCount: 0,
+            otSessionCount: 0,
+            groupSessionCount: 0,
+            otherSessionCount: 0,
+            memo: "",
+            createdBy: user.uid,
+          });
+        } catch (tErr) {
+          console.error(`trainer session zero-out failed: ${removed.trainerName}`, tErr);
+          trainerErrors.push(removed.trainerName);
+        }
+      }
+
       if (trainerErrors.length > 0) {
-        setSubmitError(`트레이너 실적 저장 실패: ${trainerErrors.join(", ")} — 다시 시도해주세요.`);
+        setSubmitError(`트레이너 세션 저장 실패: ${trainerErrors.join(", ")} — 다시 시도해주세요.`);
         return;
       }
 
@@ -501,6 +548,7 @@ export default function NewReportPage() {
   }
 
   const convRate = calcPtConversionRate(ptConsultations, ptRegistrations);
+  const selectedBranchName = branches.find((b) => b.id === selectedBranchId)?.name ?? "";
 
   if (loading) return <LoadingState />;
 
@@ -949,12 +997,28 @@ export default function NewReportPage() {
       {/* Step 5: Trainer performance */}
       {step === 5 && (
         <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-5">
-          <h2 className="font-semibold text-gray-800">5. 트레이너 실적</h2>
+          <div>
+            <h2 className="font-semibold text-gray-800">5. 트레이너 실적</h2>
+            <p className="text-xs text-gray-500 mt-1">입력 지점: {selectedBranchName}</p>
+          </div>
 
-          {branchTrainers.length === 0 ? (
-            <div className="text-center py-10 space-y-2">
-              <p className="text-sm text-gray-500">등록된 트레이너가 없습니다.</p>
-              <p className="text-xs text-gray-400">관리자에게 트레이너 등록을 요청하세요.</p>
+          <p className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
+            선택한 지점에서 진행한 세션만 입력해주세요.
+          </p>
+
+          <TrainerSearchPicker
+            trainers={allActiveTrainers}
+            excludeIds={trainerPerfs.map((p) => p.trainerId)}
+            onSelect={handleAddTrainer}
+            firstRegisteredBranchId={selectedBranchId}
+            createdBy={user?.uid ?? ""}
+            disabled={!canEditReport}
+          />
+
+          {trainerPerfs.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-sm text-gray-500">아직 추가된 트레이너가 없습니다.</p>
+              <p className="text-xs text-gray-400 mt-0.5">위 검색창에서 트레이너를 찾아 추가해주세요.</p>
             </div>
           ) : (
             <>
@@ -967,12 +1031,23 @@ export default function NewReportPage() {
                     key={perf.trainerId}
                     className="border border-gray-100 rounded-xl p-4 space-y-3"
                   >
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2">
                       <p className="text-sm font-semibold text-gray-800">{perf.trainerName}</p>
-                      <p className="text-sm font-bold text-[#1e3a5f]">
-                        총 세션 {totalSessions}회
-                        <span className="ml-1 text-xs font-normal text-gray-400">자동 계산</span>
-                      </p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-bold text-[#1e3a5f]">
+                          총 세션 {totalSessions}회
+                          <span className="ml-1 text-xs font-normal text-gray-400">자동 계산</span>
+                        </p>
+                        {canEditReport && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveTrainer(perf.trainerId)}
+                            className="text-xs text-gray-400 hover:text-red-500"
+                          >
+                            제거
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">

@@ -4,14 +4,14 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { format, subDays, startOfMonth } from "date-fns";
 import { getAllBranchesIncludingInactive } from "@/services/branches";
 import { getAllTrainers } from "@/services/trainers";
-import { getAllTrainerDailyReportsByPeriod } from "@/services/trainerDailyReports";
+import { getAllTrainerSessionsByPeriod } from "@/services/trainerSessions";
 import { getAllReports } from "@/services/reports";
 import LoadingState from "@/components/common/LoadingState";
 import PrintButton from "@/components/print/PrintButton";
 import PrintHeader from "@/components/print/PrintHeader";
 import PrintableSection from "@/components/print/PrintableSection";
 import { cn, todayYMD, formatDate } from "@/lib/utils";
-import type { Branch, Trainer, TrainerDailyReport } from "@/types";
+import type { Branch, Trainer, TrainerSession } from "@/types";
 import { ChevronDownIcon, ChevronRightIcon, SearchIcon } from "lucide-react";
 
 type Preset = "today" | "7days" | "thisMonth" | "custom";
@@ -50,22 +50,25 @@ const SORT_LABELS: Record<SortKey, string> = {
   avgPerDay: "일 평균 세션",
 };
 
-// Legacy 문서(금액 필드만 있는 과거 데이터)는 세션 필드가 없으므로 0 처리
-const ptOf = (r: TrainerDailyReport) => r.ptSessionCount ?? 0;
-const otOf = (r: TrainerDailyReport) => r.otSessionCount ?? 0;
-const groupOf = (r: TrainerDailyReport) => r.groupSessionCount ?? 0;
-const otherOf = (r: TrainerDailyReport) => r.otherSessionCount ?? 0;
-const totalOf = (r: TrainerDailyReport) => r.totalSessionCount ?? 0;
+const ptOf = (r: TrainerSession) => r.ptSessionCount ?? 0;
+const otOf = (r: TrainerSession) => r.otSessionCount ?? 0;
+const groupOf = (r: TrainerSession) => r.groupSessionCount ?? 0;
+const otherOf = (r: TrainerSession) => r.otherSessionCount ?? 0;
+const totalOf = (r: TrainerSession) => r.totalSessionCount ?? 0;
 
 function fmtAvg(v: number | null): string {
   return v === null ? "-" : v.toFixed(1).replace(/\.0$/, "");
 }
 
-function reportKey(r: { branchId: string; reportDate: string }): string {
+function sessionKey(r: { branchId: string; date: string }): string {
+  return `${r.branchId}_${r.date}`;
+}
+
+function dailyReportKey(r: { branchId: string; reportDate: string }): string {
   return `${r.branchId}_${r.reportDate}`;
 }
 
-function sumSessions(reports: TrainerDailyReport[]) {
+function sumSessions(reports: TrainerSession[]) {
   let pt = 0, ot = 0, group = 0, other = 0, total = 0;
   for (const r of reports) {
     pt += ptOf(r);
@@ -87,7 +90,7 @@ export default function TrainerDashboardPage() {
   const [periodLoading, setPeriodLoading] = useState(false);
 
   // Selected-period data (test data already removed) + validity keys for draft filtering
-  const [rawReports, setRawReports] = useState<TrainerDailyReport[]>([]);
+  const [rawReports, setRawReports] = useState<TrainerSession[]>([]);
   const [validKeys, setValidKeys] = useState<Set<string>>(new Set());
   const [fetchedCount, setFetchedCount] = useState(0);
   const [testExcludedCount, setTestExcludedCount] = useState(0);
@@ -143,7 +146,7 @@ export default function TrainerDashboardPage() {
       setPeriodLoading(true);
       try {
         const [trainerReports, dailyReports] = await Promise.all([
-          getAllTrainerDailyReportsByPeriod(from, to),
+          getAllTrainerSessionsByPeriod(from, to),
           getAllReports(from, to),
         ]);
         if (cancelled) return;
@@ -155,7 +158,7 @@ export default function TrainerDashboardPage() {
               (r) =>
                 !r.isTestData && (r.status === "submitted" || r.status === "locked")
             )
-            .map(reportKey)
+            .map(dailyReportKey)
         );
         setRawReports(nonTest);
         setValidKeys(keys);
@@ -188,7 +191,7 @@ export default function TrainerDashboardPage() {
   // Prefer the latest name from trainers collection over the snapshot in the report
   const trainerNameOf = useMemo(() => {
     const m = new Map(trainers.map((t) => [t.id, t.name]));
-    return (r: TrainerDailyReport) => m.get(r.trainerId) ?? r.trainerName;
+    return (r: TrainerSession) => m.get(r.trainerId) ?? r.trainerName;
   }, [trainers]);
 
   const brands = useMemo(
@@ -208,7 +211,7 @@ export default function TrainerDashboardPage() {
       ? new Set(branches.filter((b) => b.brand === brandFilter).map((b) => b.id))
       : null;
     const q = search.trim().toLowerCase();
-    return (r: TrainerDailyReport) => {
+    return (r: TrainerSession) => {
       if (brandBranchIds && !brandBranchIds.has(r.branchId)) return false;
       if (branchFilter && r.branchId !== branchFilter) return false;
       if (trainerFilter && r.trainerId !== trainerFilter) return false;
@@ -231,7 +234,7 @@ export default function TrainerDashboardPage() {
   const filtered = useMemo(() => {
     const base = includeDrafts
       ? rawReports
-      : rawReports.filter((r) => validKeys.has(reportKey(r)));
+      : rawReports.filter((r) => validKeys.has(sessionKey(r)));
     return base.filter((r) => activeBranchIds.has(r.branchId) && passesFilters(r));
   }, [rawReports, validKeys, includeDrafts, activeBranchIds, passesFilters]);
 
@@ -239,14 +242,14 @@ export default function TrainerDashboardPage() {
 
   // 일 평균 세션 = 총 세션 / 기록이 있는 날짜 수
   const avgPerDay = useMemo(() => {
-    const days = new Set(filtered.map((r) => r.reportDate));
+    const days = new Set(filtered.map((r) => r.date));
     return days.size === 0 ? null : summary.total / days.size;
   }, [filtered, summary.total]);
 
   // Verification logging (dev aid)
   useEffect(() => {
     if (loading || periodLoading) return;
-    const operationalCount = rawReports.filter((r) => validKeys.has(reportKey(r))).length;
+    const operationalCount = rawReports.filter((r) => validKeys.has(sessionKey(r))).length;
     const draftExcluded = rawReports.length - operationalCount;
     const byBranch: Record<string, number> = {};
     const byTrainer: Record<string, number> = {};
@@ -256,7 +259,7 @@ export default function TrainerDashboardPage() {
     }
     console.log("[TrainerDashboard] 집계 검증", {
       조회기간: `${from} ~ ${to}`,
-      trainerDailyReports_조회개수: fetchedCount,
+      trainerSessions_조회개수: fetchedCount,
       운영집계_포함개수: includeDrafts ? rawReports.length : operationalCount,
       제외_테스트데이터: testExcludedCount,
       제외_draft연결: includeDrafts ? 0 : draftExcluded,
@@ -293,7 +296,7 @@ export default function TrainerDashboardPage() {
       agg.group += groupOf(r);
       agg.other += otherOf(r);
       agg.total += totalOf(r);
-      agg.days.add(r.reportDate);
+      agg.days.add(r.date);
     }
     return Array.from(map.values()).map(({ days, ...a }) => ({
       ...a,
@@ -359,7 +362,7 @@ export default function TrainerDashboardPage() {
     if (!expandedTrainerId) return [];
     return filtered
       .filter((r) => r.trainerId === expandedTrainerId)
-      .sort((a, b) => a.reportDate.localeCompare(b.reportDate));
+      .sort((a, b) => a.date.localeCompare(b.date));
   }, [filtered, expandedTrainerId]);
 
   // Trainer aggregates within expanded branch
@@ -675,7 +678,7 @@ export default function TrainerDashboardPage() {
                                     <tbody className="divide-y divide-gray-100">
                                       {trainerDateRows.map((r) => (
                                         <tr key={r.id}>
-                                          <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">{formatDate(r.reportDate)}</td>
+                                          <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">{formatDate(r.date)}</td>
                                           <td className="px-2 py-1.5 text-gray-600">{branchNameOf(r.branchId)}</td>
                                           <td className="px-2 py-1.5 text-gray-600">{ptOf(r)}회</td>
                                           <td className="px-2 py-1.5 text-gray-600">{otOf(r)}회</td>
@@ -739,7 +742,7 @@ export default function TrainerDashboardPage() {
                             {trainerDateRows.map((r) => (
                               <div key={r.id} className="bg-gray-50 rounded-lg px-3 py-2 text-xs space-y-0.5">
                                 <div className="flex items-center justify-between">
-                                  <span className="font-medium text-gray-700">{formatDate(r.reportDate)}</span>
+                                  <span className="font-medium text-gray-700">{formatDate(r.date)}</span>
                                   <span className="font-semibold text-gray-800">총 {totalOf(r)}회</span>
                                 </div>
                                 <p className="text-gray-400">{branchNameOf(r.branchId)}</p>

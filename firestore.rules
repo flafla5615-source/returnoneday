@@ -285,15 +285,64 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
-    // ─── trainers ─────────────────────────────────────────────────────────────
-    match /trainers/{trainerId} {
-      allow read: if isActive();
-      allow write: if isAdmin();
+    // ─── trainers (전사 공용 — 지점 소속 없음) ─────────────────────────────────
+    // 트레이너 프로필 자체에는 branchIds를 두지 않는다. 지점 구분은 trainerSessions에만 존재.
+    function validTrainerCreate(data) {
+      return data.keys().hasOnly([
+          'name', 'phoneLast4', 'identifierMemo', 'firstRegisteredBranchId',
+          'active', 'createdBy', 'createdAt', 'updatedAt'
+        ])
+        && data.name is string && data.name.size() > 0
+        && data.active == true
+        && data.createdBy == uid();
     }
 
-    // ─── trainerDailyReports ─────────────────────────────────────────────────
+    function validTrainerUpdate(data) {
+      return data.diff(resource.data).affectedKeys()
+        .hasOnly(['name', 'phoneLast4', 'identifierMemo', 'active', 'updatedAt']);
+    }
+
+    match /trainers/{trainerId} {
+      // 전체 active 사용자(admin, branch_manager)가 전사 공용 목록을 조회·검색할 수 있다.
+      allow read: if isActive();
+      // branch_manager도 신규 트레이너 등록은 가능하다 (지점 연결 절차 없음).
+      allow create: if isActive() && validTrainerCreate(request.resource.data);
+      // 이름/전화번호 뒤 4자리/식별 메모/active 변경은 admin만 가능.
+      // branch_manager는 다른 트레이너 정보를 수정하거나 active를 바꿀 수 없다.
+      allow update: if isAdmin() && validTrainerUpdate(request.resource.data);
+      // 트레이너 전체 삭제는 허용하지 않는다 — 비활성 처리(active:false)로만 관리한다.
+      allow delete: if false;
+    }
+
+    // ─── trainerSessions (트레이너의 지점·날짜별 세션 기록) ────────────────────
+    // Doc ID: {branchId}_{date}_{trainerId}
+    // Admin: 전체 지점 조회/수정. branch_manager: 본인 담당 지점 세션만 입력·수정 가능.
+    match /trainerSessions/{sessionId} {
+      allow read: if isAdmin() ||
+        (isActiveManager() && resource.data.branchId in getUserData().branchIds);
+
+      allow create: if isAdmin() ||
+        (isActiveManager()
+          && request.resource.data.branchId in getUserData().branchIds
+          && request.resource.data.createdBy == uid()
+          && sessionId == request.resource.data.branchId + '_' +
+             request.resource.data.date + '_' + request.resource.data.trainerId);
+
+      // 지점/트레이너/날짜/작성자는 생성 이후 변경할 수 없다 (다른 지점 세션으로 재귀속 방지).
+      allow update: if isAdmin() ||
+        (isActiveManager()
+          && resource.data.branchId in getUserData().branchIds
+          && request.resource.data.branchId == resource.data.branchId
+          && request.resource.data.trainerId == resource.data.trainerId
+          && request.resource.data.date == resource.data.date
+          && request.resource.data.createdBy == resource.data.createdBy);
+
+      allow delete: if isAdmin();
+    }
+
+    // ─── trainerDailyReports (deprecated — 과거 지점별 세션 데이터 보존용) ─────
+    // 신규 코드에서는 사용하지 않는다. 기존 문서는 삭제하지 않고 그대로 둔다.
     // Doc ID: {branchId}_{reportDate}_{trainerId}
-    // Admin: full access. Branch manager: read own branch, write own branch.
     match /trainerDailyReports/{reportId} {
       allow read: if isAdmin() ||
         (isActiveManager() && resource.data.branchId in getUserData().branchIds);

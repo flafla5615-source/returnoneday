@@ -1,116 +1,167 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { getAllBranches } from "@/services/branches";
-import { getAllTrainers, createTrainer, updateTrainer } from "@/services/trainers";
+import { useEffect, useMemo, useState } from "react";
+import { format, startOfMonth } from "date-fns";
+import { useAuth } from "@/contexts/AuthContext";
+import { getAllBranchesIncludingInactive } from "@/services/branches";
+import { getAllTrainers, updateTrainer } from "@/services/trainers";
+import { getAllTrainerSessionsByPeriod } from "@/services/trainerSessions";
+import TrainerRegisterModal from "@/components/trainers/TrainerRegisterModal";
 import LoadingState from "@/components/common/LoadingState";
-import { cn } from "@/lib/utils";
-import type { Branch, Trainer } from "@/types";
-import { PlusIcon, EditIcon, SaveIcon, XIcon, CheckCircleIcon, CircleIcon } from "lucide-react";
+import { cn, todayYMD } from "@/lib/utils";
+import type { Branch, Trainer, TrainerSession } from "@/types";
+import {
+  PlusIcon,
+  EditIcon,
+  SaveIcon,
+  XIcon,
+  CheckCircleIcon,
+  CircleIcon,
+  SearchIcon,
+  AlertTriangleIcon,
+} from "lucide-react";
+
+type ActiveFilter = "all" | "active" | "inactive";
+
+// "김동현1" / "김동현2"처럼 이름 뒤에 숫자를 붙인 과거 시트 관행을 감지한다.
+// 자동으로 병합/제거하지 않고 관리자 확인 대상으로만 표시한다.
+function isLegacySuffixPattern(name: string, allNames: Set<string>): boolean {
+  const m = /^(.+)([12])$/.exec(name);
+  if (!m) return false;
+  const [, base, digit] = m;
+  const otherDigit = digit === "1" ? "2" : "1";
+  return allNames.has(base) || allNames.has(`${base}${otherDigit}`);
+}
 
 export default function TrainerManagePage() {
-  const [branches, setBranches]   = useState<Branch[]>([]);
-  const [trainers, setTrainers]   = useState<Trainer[]>([]);
-  const [loading, setLoading]     = useState(true);
+  const { profile } = useAuth();
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [trainers, setTrainers] = useState<Trainer[]>([]);
+  const [sessions, setSessions] = useState<TrainerSession[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Add form
-  const [showAdd, setShowAdd]         = useState(false);
-  const [addName, setAddName]         = useState("");
-  const [addBranchIds, setAddBranchIds] = useState<string[]>([]);
-  const [addActive, setAddActive]     = useState(true);
-  const [addSaving, setAddSaving]     = useState(false);
-  const [addError, setAddError]       = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [activeFilter, setActiveFilter] = useState<ActiveFilter>("active");
+  const [addOpen, setAddOpen] = useState(false);
 
   // Edit
-  const [editId, setEditId]           = useState<string | null>(null);
-  const [editName, setEditName]       = useState("");
-  const [editBranchIds, setEditBranchIds] = useState<string[]>([]);
-  const [editActive, setEditActive]   = useState(true);
-  const [editSaving, setEditSaving]   = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editPhoneLast4, setEditPhoneLast4] = useState("");
+  const [editIdentifierMemo, setEditIdentifierMemo] = useState("");
+  const [editActive, setEditActive] = useState(true);
+  const [editSaving, setEditSaving] = useState(false);
 
-  // Filter
-  const [showInactive, setShowInactive] = useState(false);
+  const monthFrom = format(startOfMonth(new Date()), "yyyy-MM-dd");
+  const today = todayYMD();
 
   useEffect(() => {
-    Promise.all([getAllBranches(), getAllTrainers()]).then(([bs, ts]) => {
-      setBranches(bs);
+    Promise.all([
+      getAllTrainers(),
+      getAllBranchesIncludingInactive(),
+      getAllTrainerSessionsByPeriod(monthFrom, today),
+    ]).then(([ts, bs, sess]) => {
       setTrainers(ts);
+      setBranches(bs);
+      setSessions(sess.filter((s) => !s.isTestData));
       setLoading(false);
     });
-  }, []);
+  }, [monthFrom, today]);
 
-  // ── Add ──────────────────────────────────────────────────────────────────────
+  const branchNameOf = useMemo(() => {
+    const m = new Map(branches.map((b) => [b.id, b.name]));
+    return (id: string) => m.get(id) ?? id;
+  }, [branches]);
 
-  function openAdd() {
-    setAddName(""); setAddBranchIds([]); setAddActive(true);
-    setAddError(null); setShowAdd(true);
-  }
+  // 이번 달 트레이너별 세션 합계 + 활동 지점 (트레이너 문서에는 저장하지 않는 파생값)
+  const statsByTrainer = useMemo(() => {
+    const map = new Map<string, { total: number; branchIds: Set<string> }>();
+    for (const s of sessions) {
+      let agg = map.get(s.trainerId);
+      if (!agg) {
+        agg = { total: 0, branchIds: new Set() };
+        map.set(s.trainerId, agg);
+      }
+      agg.total += s.totalSessionCount ?? 0;
+      agg.branchIds.add(s.branchId);
+    }
+    return map;
+  }, [sessions]);
 
-  function cancelAdd() {
-    setShowAdd(false); setAddError(null);
-  }
+  const nameCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    trainers.forEach((t) => m.set(t.name, (m.get(t.name) ?? 0) + 1));
+    return m;
+  }, [trainers]);
 
-  async function saveAdd() {
-    const name = addName.trim();
-    if (!name) { setAddError("트레이너명을 입력하세요"); return; }
-    const dup = trainers.find((t) => t.name === name && t.active);
-    if (dup) { setAddError("이미 동일한 이름의 활성 트레이너가 있습니다"); return; }
+  const allNames = useMemo(() => new Set(trainers.map((t) => t.name)), [trainers]);
 
-    setAddSaving(true);
-    const id = await createTrainer({ name, branchIds: addBranchIds, active: addActive });
-    const newTrainer: Trainer = {
-      id, name, branchIds: addBranchIds, active: addActive,
-      createdAt: null as never, updatedAt: null as never,
-    };
-    setTrainers((prev) => [...prev, newTrainer]);
-    setShowAdd(false);
-    setAddSaving(false);
-  }
+  const displayed = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return trainers
+      .filter((t) => (activeFilter === "all" ? true : activeFilter === "active" ? t.active : !t.active))
+      .filter((t) => {
+        if (!q) return true;
+        return (
+          t.name.toLowerCase().includes(q) ||
+          (t.phoneLast4 ?? "").includes(q) ||
+          (t.identifierMemo ?? "").toLowerCase().includes(q)
+        );
+      });
+  }, [trainers, search, activeFilter]);
 
-  // ── Edit ─────────────────────────────────────────────────────────────────────
+  const activeCount = trainers.filter((t) => t.active).length;
 
   function openEdit(t: Trainer) {
     setEditId(t.id);
     setEditName(t.name);
-    setEditBranchIds(t.branchIds);
+    setEditPhoneLast4(t.phoneLast4 ?? "");
+    setEditIdentifierMemo(t.identifierMemo ?? "");
     setEditActive(t.active);
   }
 
-  function cancelEdit() { setEditId(null); }
+  function cancelEdit() {
+    setEditId(null);
+  }
 
   async function saveEdit() {
     if (!editId) return;
     const name = editName.trim();
     if (!name) return;
     setEditSaving(true);
-    await updateTrainer(editId, { name, branchIds: editBranchIds, active: editActive });
+    try {
+      await updateTrainer(editId, {
+        name,
+        phoneLast4: editPhoneLast4.trim(),
+        identifierMemo: editIdentifierMemo.trim(),
+        active: editActive,
+      });
+      setTrainers((prev) =>
+        prev.map((t) =>
+          t.id === editId
+            ? {
+                ...t,
+                name,
+                phoneLast4: editPhoneLast4.trim() || undefined,
+                identifierMemo: editIdentifierMemo.trim() || undefined,
+                active: editActive,
+              }
+            : t
+        )
+      );
+      setEditId(null);
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  function handleRegistered(trainer: Trainer) {
     setTrainers((prev) =>
-      prev.map((t) =>
-        t.id === editId ? { ...t, name, branchIds: editBranchIds, active: editActive } : t
-      )
-    );
-    setEditId(null);
-    setEditSaving(false);
-  }
-
-  // ── Branch toggle helpers ──────────────────────────────────────────────────
-
-  function toggleAdd(id: string) {
-    setAddBranchIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
-  }
-
-  function toggleEdit(id: string) {
-    setEditBranchIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+      prev.some((t) => t.id === trainer.id) ? prev : [...prev, trainer]
     );
   }
 
   if (loading) return <LoadingState />;
-
-  const displayed = trainers.filter((t) => showInactive || t.active);
-  const activeCount = trainers.filter((t) => t.active).length;
 
   return (
     <div className="space-y-4">
@@ -122,121 +173,75 @@ export default function TrainerManagePage() {
             활성 {activeCount}명 · 전체 {trainers.length}명
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <button
+          onClick={() => setAddOpen(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-[#1e3a5f] text-white rounded-lg hover:bg-[#16304f]"
+        >
+          <PlusIcon className="w-3.5 h-3.5" />
+          트레이너 추가
+        </button>
+      </div>
+
+      <p className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
+        트레이너는 전 지점 공용으로 등록됩니다. 특정 지점 소속으로 저장되지 않습니다.
+        지점 정보는 트레이너 세션 기록에만 저장됩니다.
+      </p>
+
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative">
+          <SearchIcon className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="이름·전화번호·메모 검색"
+            className="border border-gray-300 rounded-lg pl-8 pr-3 py-1.5 text-xs w-56 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]"
+          />
+        </div>
+        {(
+          [
+            { key: "active", label: "활성만" },
+            { key: "inactive", label: "비활성만" },
+            { key: "all", label: "전체" },
+          ] as const
+        ).map(({ key, label }) => (
           <button
-            onClick={() => setShowInactive((p) => !p)}
+            key={key}
+            onClick={() => setActiveFilter(key)}
             className={cn(
               "px-3 py-1.5 text-xs rounded-lg border transition-colors",
-              showInactive
+              activeFilter === key
                 ? "border-[#1e3a5f] text-[#1e3a5f] bg-white"
                 : "border-gray-300 text-gray-600 bg-white hover:bg-gray-50"
             )}
           >
-            {showInactive ? "전체 보기" : "활성만 보기"}
+            {label}
           </button>
-          <button
-            onClick={openAdd}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-[#1e3a5f] text-white rounded-lg hover:bg-[#16304f]"
-          >
-            <PlusIcon className="w-3.5 h-3.5" />
-            트레이너 추가
-          </button>
-        </div>
+        ))}
       </div>
-
-      {/* Add form */}
-      {showAdd && (
-        <div className="bg-white rounded-xl border border-[#1e3a5f]/30 shadow-sm p-4 space-y-4">
-          <h3 className="text-sm font-semibold text-gray-900">새 트레이너 추가</h3>
-
-          <div>
-            <label className="text-xs font-medium text-gray-700 block mb-1">트레이너명 *</label>
-            <input
-              type="text"
-              value={addName}
-              onChange={(e) => { setAddName(e.target.value); setAddError(null); }}
-              placeholder="이름 입력"
-              autoFocus
-              className={cn(
-                "w-full max-w-xs border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]",
-                addError ? "border-red-400" : "border-gray-300"
-              )}
-            />
-            {addError && <p className="text-xs text-red-500 mt-1">{addError}</p>}
-          </div>
-
-          <div>
-            <label className="text-xs font-medium text-gray-700 block mb-1">담당 지점</label>
-            <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto">
-              {branches.map((b) => (
-                <button
-                  key={b.id}
-                  type="button"
-                  onClick={() => toggleAdd(b.id)}
-                  className={cn(
-                    "px-2.5 py-1 rounded-full text-xs border transition-colors",
-                    addBranchIds.includes(b.id)
-                      ? "bg-[#1e3a5f] text-white border-[#1e3a5f]"
-                      : "bg-white text-gray-600 border-gray-300 hover:border-gray-400"
-                  )}
-                >
-                  {b.name}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <label className="text-xs font-medium text-gray-700">활성 여부</label>
-            <button
-              type="button"
-              onClick={() => setAddActive((p) => !p)}
-              className={cn(
-                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border transition-colors",
-                addActive
-                  ? "bg-green-50 text-green-700 border-green-300"
-                  : "bg-gray-50 text-gray-500 border-gray-300"
-              )}
-            >
-              {addActive
-                ? <><CheckCircleIcon className="w-3.5 h-3.5" /> 활성</>
-                : <><CircleIcon className="w-3.5 h-3.5" /> 비활성</>
-              }
-            </button>
-          </div>
-
-          <div className="flex gap-2">
-            <button
-              onClick={saveAdd}
-              disabled={addSaving}
-              className="flex items-center gap-1.5 px-4 py-2 text-sm bg-[#1e3a5f] text-white rounded-lg hover:bg-[#16304f] disabled:opacity-50"
-            >
-              <SaveIcon className="w-3.5 h-3.5" />
-              {addSaving ? "저장 중..." : "저장"}
-            </button>
-            <button
-              onClick={cancelAdd}
-              className="flex items-center gap-1.5 px-4 py-2 text-sm border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
-            >
-              <XIcon className="w-3.5 h-3.5" />
-              취소
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Trainer list */}
       {displayed.length === 0 ? (
         <div className="text-center py-12 text-gray-400 text-sm">
-          {showInactive ? "등록된 트레이너가 없습니다" : "활성 트레이너가 없습니다"}
+          조건에 맞는 트레이너가 없습니다
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
+          <table className="w-full text-sm min-w-[880px]">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                {["트레이너명", "담당 지점", "활성 여부", ""].map((h) => (
-                  <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500">
+                {[
+                  "이름",
+                  "전화번호 뒤 4자리",
+                  "식별 메모",
+                  "최초 등록 지점",
+                  "최근 활동 지점 (이번 달)",
+                  "이번 달 총 세션",
+                  "활성 여부",
+                  "",
+                ].map((h) => (
+                  <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500 whitespace-nowrap">
                     {h}
                   </th>
                 ))}
@@ -245,14 +250,16 @@ export default function TrainerManagePage() {
             <tbody className="divide-y divide-gray-100">
               {displayed.map((t) => {
                 const isEditing = editId === t.id;
-                const branchNames = t.branchIds
-                  .map((id) => branches.find((b) => b.id === id)?.name ?? id)
-                  .join(", ");
+                const isDuplicateName = (nameCounts.get(t.name) ?? 0) > 1;
+                const isLegacyFlag = isLegacySuffixPattern(t.name, allNames);
+                const stats = statsByTrainer.get(t.id);
+                const recentBranches = stats
+                  ? Array.from(stats.branchIds).map(branchNameOf).join(", ")
+                  : "";
 
                 if (isEditing) {
                   return (
                     <tr key={t.id} className="bg-blue-50">
-                      {/* Name edit */}
                       <td className="px-4 py-3">
                         <input
                           type="text"
@@ -262,29 +269,29 @@ export default function TrainerManagePage() {
                           className="border border-gray-300 rounded-lg px-2 py-1 text-sm w-32 focus:outline-none focus:ring-1 focus:ring-[#1e3a5f]"
                         />
                       </td>
-
-                      {/* Branch edit */}
                       <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-1.5 max-w-xs">
-                          {branches.map((b) => (
-                            <button
-                              key={b.id}
-                              type="button"
-                              onClick={() => toggleEdit(b.id)}
-                              className={cn(
-                                "px-2 py-0.5 rounded-full text-xs border transition-colors",
-                                editBranchIds.includes(b.id)
-                                  ? "bg-[#1e3a5f] text-white border-[#1e3a5f]"
-                                  : "bg-white text-gray-500 border-gray-300 hover:border-gray-400"
-                              )}
-                            >
-                              {b.name}
-                            </button>
-                          ))}
-                        </div>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={4}
+                          value={editPhoneLast4}
+                          onChange={(e) => setEditPhoneLast4(e.target.value.replace(/[^0-9]/g, ""))}
+                          className="border border-gray-300 rounded-lg px-2 py-1 text-sm w-24 focus:outline-none focus:ring-1 focus:ring-[#1e3a5f]"
+                        />
                       </td>
-
-                      {/* Active toggle */}
+                      <td className="px-4 py-3">
+                        <input
+                          type="text"
+                          value={editIdentifierMemo}
+                          onChange={(e) => setEditIdentifierMemo(e.target.value)}
+                          className="border border-gray-300 rounded-lg px-2 py-1 text-sm w-32 focus:outline-none focus:ring-1 focus:ring-[#1e3a5f]"
+                        />
+                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-400">
+                        {t.firstRegisteredBranchId ? branchNameOf(t.firstRegisteredBranchId) : "-"}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-400">{recentBranches || "-"}</td>
+                      <td className="px-4 py-3 text-xs text-gray-400">{stats?.total ?? 0}회</td>
                       <td className="px-4 py-3">
                         <button
                           type="button"
@@ -302,8 +309,6 @@ export default function TrainerManagePage() {
                           }
                         </button>
                       </td>
-
-                      {/* Save / Cancel */}
                       <td className="px-4 py-3">
                         <div className="flex gap-1">
                           <button
@@ -329,10 +334,34 @@ export default function TrainerManagePage() {
 
                 return (
                   <tr key={t.id} className={cn("hover:bg-gray-50", !t.active && "opacity-50")}>
-                    <td className="px-4 py-3 font-medium text-gray-900">{t.name}</td>
-                    <td className="px-4 py-3 text-gray-500 text-xs">
-                      {branchNames || <span className="italic text-gray-300">미배정</span>}
+                    <td className="px-4 py-3 font-medium text-gray-900">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {t.name}
+                        {isDuplicateName && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700">
+                            동명이인 {nameCounts.get(t.name)}명
+                          </span>
+                        )}
+                        {isLegacyFlag && (
+                          <span
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-red-100 text-red-700"
+                            title="이름 뒤 숫자가 붙은 과거 시트 패턴으로 보입니다. 자동 병합/삭제되지 않으니 확인해주세요."
+                          >
+                            <AlertTriangleIcon className="w-2.5 h-2.5" />
+                            확인 필요
+                          </span>
+                        )}
+                      </div>
                     </td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">{t.phoneLast4 || "-"}</td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">{t.identifierMemo || "-"}</td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">
+                      {t.firstRegisteredBranchId ? branchNameOf(t.firstRegisteredBranchId) : "-"}
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 text-xs max-w-[220px]">
+                      {recentBranches || <span className="italic text-gray-300">활동 없음</span>}
+                    </td>
+                    <td className="px-4 py-3 text-gray-700 text-xs">{stats?.total ?? 0}회</td>
                     <td className="px-4 py-3">
                       <span
                         className={cn(
@@ -361,6 +390,17 @@ export default function TrainerManagePage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {addOpen && (
+        <TrainerRegisterModal
+          open
+          onClose={() => setAddOpen(false)}
+          allTrainers={trainers}
+          createdBy={profile?.uid ?? ""}
+          onRegistered={handleRegistered}
+          branchNameOf={branchNameOf}
+        />
       )}
     </div>
   );

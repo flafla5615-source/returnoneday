@@ -184,27 +184,38 @@ export interface DateRange {
   to: Date;
 }
 
-// ─── Trainer ─────────────────────────────────────────────────────────────────
+// ─── Trainer (전사 공용 — 특정 지점 소속 없음) ─────────────────────────────────
+// 트레이너는 회사 전체에서 공용으로 사용하는 프로필 1개만 존재한다.
+// 지점 정보는 트레이너 프로필이 아니라 TrainerSession(세션 기록)에만 저장한다.
 
 export interface Trainer {
   id: string;
   name: string;
-  branchIds: string[];
+  phoneLast4?: string;              // 동명이인 식별용 — 전화번호 뒤 4자리
+  identifierMemo?: string;          // 동명이인 식별용 — 참고 메모
+  firstRegisteredBranchId?: string; // 소속이 아니라 최초 등록 지점 참고값 (동명이인 식별용)
   active: boolean;
+  createdBy: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+
+  // Deprecated — 더 이상 사용하지 않음. 과거 문서 호환을 위해서만 optional로 남겨둠.
+  // 신규 조회·UI에서는 참조 금지 (트레이너는 지점 소속 개념이 없음).
+  branchIds?: string[];
 }
 
-// ─── Trainer Daily Report ────────────────────────────────────────────────────
+// ─── Trainer Session (트레이너의 지점·날짜별 세션 기록) ────────────────────────
+// 트레이너 자체는 전사 공용이며, 지점 구분은 이 세션 기록에만 존재한다.
+// 같은 트레이너가 같은 날 여러 지점의 세션에 동시에 등장할 수 있다.
+// 문서 ID: {branchId}_{date}_{trainerId} — 같은 지점·날짜·트레이너 조합은 1건만 존재.
 
-export interface TrainerDailyReport {
+export interface TrainerSession {
   id: string;
-  branchId: string;
-  reportDate: string; // YYYY-MM-DD
   trainerId: string;
-  trainerName: string;
+  trainerName: string; // 저장 시점 스냅샷 — 이후 트레이너 이름이 바뀌어도 과거 기록은 유지
+  branchId: string;
+  date: string; // YYYY-MM-DD
 
-  // 수업 세션 수 (금액 관리는 하지 않음)
   ptSessionCount: number;
   otSessionCount: number;
   groupSessionCount: number;
@@ -213,16 +224,10 @@ export interface TrainerDailyReport {
 
   memo?: string;
 
-  writerUid: string;
+  createdBy: string;
   isTestData?: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
-
-  // Legacy 금액 필드 — 과거 저장 문서와의 호환용. 신규 입력·표시에 사용 금지.
-  walkInSales?: number;
-  personalSales?: number;
-  totalSales?: number;
-  classCount?: number;
 }
 
 // ─── Manager Invite ──────────────────────────────────────────────────────────

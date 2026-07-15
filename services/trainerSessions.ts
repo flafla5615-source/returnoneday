@@ -9,7 +9,7 @@ import {
   Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import type { TrainerDailyReport } from "@/types";
+import type { TrainerSession } from "@/types";
 
 // ── Validation ────────────────────────────────────────────────────────────────
 
@@ -20,20 +20,18 @@ function sanitizeCount(v: number | undefined | null): number {
 }
 
 // ── Document ID ───────────────────────────────────────────────────────────────
+// 같은 지점·날짜·트레이너 조합은 문서 1개만 존재한다. 트레이너 자체는 지점 소속이
+// 없으므로, 지점 구분은 이 ID(및 branchId 필드)에만 존재한다.
 
-export function trainerDailyReportId(
-  branchId: string,
-  reportDate: string,
-  trainerId: string
-): string {
-  return `${branchId}_${reportDate}_${trainerId}`;
+export function trainerSessionId(branchId: string, date: string, trainerId: string): string {
+  return `${branchId}_${date}_${trainerId}`;
 }
 
 // ── Upsert ────────────────────────────────────────────────────────────────────
 
-export type UpsertTrainerDailyReportInput = {
+export type UpsertTrainerSessionInput = {
   branchId: string;
-  reportDate: string;
+  date: string;
   trainerId: string;
   trainerName: string;
   ptSessionCount?: number | null;
@@ -41,12 +39,12 @@ export type UpsertTrainerDailyReportInput = {
   groupSessionCount?: number | null;
   otherSessionCount?: number | null;
   memo?: string;
-  writerUid: string;
+  createdBy: string;
   isTestData?: boolean;
 };
 
-export async function upsertTrainerDailyReport(
-  input: UpsertTrainerDailyReportInput
+export async function upsertTrainerSession(
+  input: UpsertTrainerSessionInput
 ): Promise<string> {
   const ptSessionCount = sanitizeCount(input.ptSessionCount);
   const otSessionCount = sanitizeCount(input.otSessionCount);
@@ -55,7 +53,7 @@ export async function upsertTrainerDailyReport(
   const totalSessionCount =
     ptSessionCount + otSessionCount + groupSessionCount + otherSessionCount;
 
-  const id = trainerDailyReportId(input.branchId, input.reportDate, input.trainerId);
+  const id = trainerSessionId(input.branchId, input.date, input.trainerId);
   const now = Timestamp.now();
 
   // undefined는 Firestore에 저장하지 않는다 — memo는 값이 있을 때만 포함
@@ -63,17 +61,17 @@ export async function upsertTrainerDailyReport(
 
   const data: Record<string, unknown> = {
     id,
-    branchId: input.branchId,
-    reportDate: input.reportDate,
     trainerId: input.trainerId,
     trainerName: input.trainerName,
+    branchId: input.branchId,
+    date: input.date,
     ptSessionCount,
     otSessionCount,
     groupSessionCount,
     otherSessionCount,
     totalSessionCount,
     memo: memo || "",
-    writerUid: input.writerUid,
+    createdBy: input.createdBy,
     createdAt: now,
     updatedAt: now,
   };
@@ -83,81 +81,64 @@ export async function upsertTrainerDailyReport(
   }
 
   // merge:true — 같은 ID 재저장 시 업데이트 (중복 문서 생성 없음)
-  await setDoc(doc(db, "trainerDailyReports", id), data, { merge: true });
+  await setDoc(doc(db, "trainerSessions", id), data, { merge: true });
 
   return id;
 }
 
 // ── Queries ───────────────────────────────────────────────────────────────────
 
-export async function getTrainerDailyReportsByBranchAndDate(
+export async function getTrainerSessionsByBranchAndDate(
   branchId: string,
-  reportDate: string
-): Promise<TrainerDailyReport[]> {
+  date: string
+): Promise<TrainerSession[]> {
   // Equality-only filters use single-field auto-indexes — no composite index needed.
   const snap = await getDocs(
     query(
-      collection(db, "trainerDailyReports"),
+      collection(db, "trainerSessions"),
       where("branchId", "==", branchId),
-      where("reportDate", "==", reportDate)
+      where("date", "==", date)
     )
   );
   return snap.docs
-    .map((d) => ({ ...d.data() } as TrainerDailyReport))
+    .map((d) => ({ ...d.data() } as TrainerSession))
     .sort((a, b) => a.trainerName.localeCompare(b.trainerName, "ko"));
 }
 
-export async function getTrainerDailyReportsByPeriod(
+export async function getTrainerSessionsByPeriod(
   branchId: string,
   fromDate: string,
   toDate: string
-): Promise<TrainerDailyReport[]> {
+): Promise<TrainerSession[]> {
   const snap = await getDocs(
     query(
-      collection(db, "trainerDailyReports"),
+      collection(db, "trainerSessions"),
       where("branchId", "==", branchId),
-      where("reportDate", ">=", fromDate),
-      where("reportDate", "<=", toDate),
-      orderBy("reportDate", "asc")
+      where("date", ">=", fromDate),
+      where("date", "<=", toDate),
+      orderBy("date", "asc")
     )
   );
   return snap.docs
-    .map((d) => ({ ...d.data() } as TrainerDailyReport))
+    .map((d) => ({ ...d.data() } as TrainerSession))
     .sort((a, b) =>
-      a.reportDate !== b.reportDate
-        ? a.reportDate.localeCompare(b.reportDate)
+      a.date !== b.date
+        ? a.date.localeCompare(b.date)
         : a.trainerName.localeCompare(b.trainerName, "ko")
     );
 }
 
-export async function getAllTrainerDailyReportsByPeriod(
+export async function getAllTrainerSessionsByPeriod(
   fromDate: string,
   toDate: string
-): Promise<TrainerDailyReport[]> {
+): Promise<TrainerSession[]> {
   const snap = await getDocs(
     query(
-      collection(db, "trainerDailyReports"),
-      where("reportDate", ">=", fromDate),
-      where("reportDate", "<=", toDate),
-      orderBy("reportDate", "asc")
+      collection(db, "trainerSessions"),
+      where("date", ">=", fromDate),
+      where("date", "<=", toDate),
+      orderBy("date", "asc")
     )
   );
-  return snap.docs.map((d) => ({ ...d.data() } as TrainerDailyReport));
-}
-
-export async function getTrainerDailyReportsByTrainer(
-  trainerId: string,
-  fromDate: string,
-  toDate: string
-): Promise<TrainerDailyReport[]> {
-  const snap = await getDocs(
-    query(
-      collection(db, "trainerDailyReports"),
-      where("trainerId", "==", trainerId),
-      where("reportDate", ">=", fromDate),
-      where("reportDate", "<=", toDate),
-      orderBy("reportDate", "asc")
-    )
-  );
-  return snap.docs.map((d) => ({ ...d.data() } as TrainerDailyReport));
+  return snap.docs.map((d) => ({ ...d.data() } as TrainerSession));
 }
