@@ -28,22 +28,40 @@ const CLASSIFICATION_COLOR: Record<Classification, string> = {
   review: "bg-amber-100 text-amber-700",
 };
 
-// 서버가 반환하는 message는 아래 표에 있으면 안내 문구로 치환하고,
-// 이미 한국어 문장(예: requireAdmin의 "관리자만 사용할 수 있는 기능입니다.")이면 그대로 쓴다.
-// 그 외(예상 못한 내부 오류 메시지, 키 정보 등)는 절대 그대로 노출하지 않고 일반 문구로 대체한다.
+// 서버(previewTrainerImport)가 HttpsError(code, message)로 던진 message는 안전한 짧은
+// 토큰이다(비밀키·스택 없음). 아래 표에 있으면 안내 문구로 치환한다.
+// requireAdmin()처럼 서버가 이미 한국어 문장을 message로 준 경우는 그대로 사용한다.
+// 그 외(알 수 없는 원문 오류)는 절대 그대로 노출하지 않고 일반 문구로 대체한다.
 const IMPORT_ERROR_MESSAGES: Record<string, string> = {
   "sheets-not-configured": "구글시트 연동 설정이 필요합니다.",
-  "sheets-access-denied": "시트 접근 권한이 없습니다. 서비스 계정에 시트 읽기 권한을 공유해주세요.",
-  "sheet-not-found": "시트 탭을 찾을 수 없습니다. 시트 이름을 확인해주세요.",
-  "columns-not-found": "필요한 컬럼(이름/지점명/직급/연락처/현재 상태)을 찾을 수 없습니다.",
+  "sheets-access-denied": "서비스 계정에 시트 접근 권한이 없습니다.",
+  "sheets-api-disabled": "Google Sheets API가 활성화되지 않았습니다.",
+  "invalid-credentials": "구글시트 연동 설정이 필요합니다.",
+  "sheet-not-found": "필요한 시트 또는 컬럼을 찾지 못했습니다.",
+  "columns-not-found": "필요한 시트 또는 컬럼을 찾지 못했습니다.",
   "no-data": "재직 중인 TR 트레이너 데이터를 찾지 못했습니다.",
 };
 
 function importErrorMessage(err: unknown): string {
+  const code = (err as { code?: string })?.code ?? "";
   const message = (err as { message?: string })?.message ?? "";
+
+  // 1) 서버가 보낸 안전한 코드 토큰이 가장 구체적인 원인이므로 우선 확인한다.
   if (IMPORT_ERROR_MESSAGES[message]) return IMPORT_ERROR_MESSAGES[message];
+
+  // 2) message가 모르는 값인데 code가 not-found면 함수 자체가 배포되지 않은 경우다
+  //    (Firebase 클라이언트 SDK가 "functions/not-found"를 던짐).
+  if (code.includes("not-found")) {
+    return "Firebase 함수가 배포되지 않았습니다. 관리자에게 문의해주세요.";
+  }
+  if (code.includes("unauthenticated") || code.includes("permission-denied")) {
+    return "관리자 로그인 권한을 확인해주세요.";
+  }
+
+  // 3) requireAdmin() 등 서버가 이미 사용자에게 보여줄 한국어 문장을 보낸 경우.
   if (/[가-힣]/.test(message)) return message;
-  return "일시적인 오류로 불러오지 못했습니다. 잠시 후 다시 시도해주세요.";
+
+  return "일시적인 서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
 }
 
 export default function TrainerImportPage() {

@@ -366,9 +366,25 @@ async function fetchSheetsAccessToken(email: string, privateKey: string): Promis
     key: privateKey.replace(/\\n/g, "\n"),
     scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
   });
-  const token = await client.getAccessToken();
-  if (!token.token) throw new SheetsImportError("internal", "no-access-token");
-  return token.token;
+  try {
+    const token = await client.getAccessToken();
+    if (!token.token) throw new SheetsImportError("invalid-credentials", "no-access-token");
+    return token.token;
+  } catch (error) {
+    if (error instanceof SheetsImportError) throw error;
+    // 서비스 계정 이메일/개인키 형식이 잘못됐거나 계정 자체가 유효하지 않은 경우
+    console.error("[previewTrainerImport] JWT auth failed", (error as Error).message);
+    throw new SheetsImportError("invalid-credentials", (error as Error).message);
+  }
+}
+
+// 403 응답 본문으로 "API 자체가 비활성화"인지 "시트가 서비스 계정에 공유되지 않음"인지 구분한다.
+async function classify403(res: Response): Promise<SheetsImportError> {
+  const bodyText = await res.text().catch(() => "");
+  if (/has not been used in project|SERVICE_DISABLED|is disabled/i.test(bodyText)) {
+    return new SheetsImportError("sheets-api-disabled", "sheets api disabled");
+  }
+  return new SheetsImportError("sheets-access-denied", "access denied");
 }
 
 async function sheetsValuesGet(
@@ -381,7 +397,7 @@ async function sheetsValuesGet(
   )}/values/${encodeURIComponent(range)}`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!res.ok) {
-    if (res.status === 403) throw new SheetsImportError("sheets-access-denied", "access denied");
+    if (res.status === 403) throw await classify403(res);
     if (res.status === 404 || res.status === 400) {
       throw new SheetsImportError("sheet-not-found", "sheet/range not found");
     }
@@ -402,7 +418,7 @@ async function sheetsValuesBatchGet(
   )}/values:batchGet?${query}`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!res.ok) {
-    if (res.status === 403) throw new SheetsImportError("sheets-access-denied", "access denied");
+    if (res.status === 403) throw await classify403(res);
     if (res.status === 404 || res.status === 400) {
       throw new SheetsImportError("sheet-not-found", "sheet/range not found");
     }
@@ -515,16 +531,18 @@ export const previewTrainerImport = onCall(
       return { rows: results };
     } catch (error) {
       if (error instanceof SheetsImportError) {
+        // 원인별 코드는 서버 로그에만 남기고, 클라이언트에는 안전한 코드 토큰만 전달한다
+        // (비밀키 원문·전체 스택은 절대 message에 담지 않는다).
         console.error("[previewTrainerImport] failed", error.code, error.message);
-        const httpsCode =
-          error.code === "sheets-access-denied"
-            ? "permission-denied"
-            : error.code === "sheet-not-found" || error.code === "no-data"
-              ? "not-found"
-              : error.code === "columns-not-found"
-                ? "failed-precondition"
-                : "internal";
-        throw new HttpsError(httpsCode, error.code);
+        const httpsCode: Record<string, "permission-denied" | "not-found" | "failed-precondition" | "internal"> = {
+          "sheets-access-denied": "permission-denied",
+          "sheet-not-found": "not-found",
+          "no-data": "not-found",
+          "columns-not-found": "failed-precondition",
+          "sheets-api-disabled": "failed-precondition",
+          "invalid-credentials": "failed-precondition",
+        };
+        throw new HttpsError(httpsCode[error.code] ?? "internal", error.code);
       }
       console.error("[previewTrainerImport] unexpected error", (error as Error).message);
       throw new HttpsError("internal", "sheets-fetch-failed");
