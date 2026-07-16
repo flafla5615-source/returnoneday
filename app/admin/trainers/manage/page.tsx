@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { format, startOfMonth } from "date-fns";
 import { useAuth } from "@/contexts/AuthContext";
 import { getAllBranchesIncludingInactive } from "@/services/branches";
@@ -19,6 +20,7 @@ import {
   CircleIcon,
   SearchIcon,
   AlertTriangleIcon,
+  CloudDownloadIcon,
 } from "lucide-react";
 
 type ActiveFilter = "all" | "active" | "inactive";
@@ -173,13 +175,22 @@ export default function TrainerManagePage() {
             활성 {activeCount}명 · 전체 {trainers.length}명
           </p>
         </div>
-        <button
-          onClick={() => setAddOpen(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-[#1e3a5f] text-white rounded-lg hover:bg-[#16304f]"
-        >
-          <PlusIcon className="w-3.5 h-3.5" />
-          트레이너 추가
-        </button>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/admin/trainers/import"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-[#1e3a5f] text-[#1e3a5f] rounded-lg hover:bg-[#1e3a5f]/5"
+          >
+            <CloudDownloadIcon className="w-3.5 h-3.5" />
+            구글시트 트레이너 불러오기
+          </Link>
+          <button
+            onClick={() => setAddOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-[#1e3a5f] text-white rounded-lg hover:bg-[#16304f]"
+          >
+            <PlusIcon className="w-3.5 h-3.5" />
+            트레이너 추가
+          </button>
+        </div>
       </div>
 
       <p className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">

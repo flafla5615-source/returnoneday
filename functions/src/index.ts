@@ -1,7 +1,9 @@
 import { HttpsError, onCall, onRequest } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
+import { defineSecret } from "firebase-functions/params";
 import * as admin from "firebase-admin";
 import * as nodemailer from "nodemailer";
+import { JWT } from "google-auth-library";
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -39,7 +41,7 @@ async function requireAdmin(uid: string | undefined): Promise<void> {
   const userDoc = await db.doc(`users/${uid}`).get();
   const user = userDoc.data();
   if (!user || user.role !== "admin" || user.status !== "active") {
-    throw new HttpsError("permission-denied", "관리자만 지점 운영계정을 생성할 수 있습니다.");
+    throw new HttpsError("permission-denied", "관리자만 사용할 수 있는 기능입니다.");
   }
 }
 
@@ -296,6 +298,237 @@ export const setBranchAccountPassword = onCall(
     }
 
     return { success: true, uid: authUser.uid };
+  }
+);
+
+// ─── 트레이너 명단 구글시트 불러오기 미리보기 (admin 전용) ──────────────────────
+// 이 단계에서는 Firestore trainers 컬렉션에 아무것도 쓰지 않는다 — 읽기 전용 미리보기.
+// 주민번호·계좌번호·급여 등 민감 컬럼은 애초에 요청하지 않는다: 헤더 행에서
+// 필요한 5개 컬럼(이름/지점명/직급/연락처/현재 상태)의 위치만 찾아 그 열만
+// 개별적으로 조회하므로, 시트에 다른 민감 컬럼이 있어도 서버로 전달되지 않는다.
+
+const GOOGLE_SHEETS_SPREADSHEET_ID = defineSecret("GOOGLE_SHEETS_SPREADSHEET_ID");
+const GOOGLE_SERVICE_ACCOUNT_EMAIL = defineSecret("GOOGLE_SERVICE_ACCOUNT_EMAIL");
+const GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = defineSecret("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY");
+
+const TRAINER_SHEET_NAME = "인력 현황";
+const TR_JOB_TITLES = ["프로TR", "시니어TR", "파트TR", "주니어TR"];
+const SHEETS_COLUMN_HEADERS = {
+  name: "이름",
+  branch: "지점명",
+  job: "직급",
+  phone: "연락처",
+  status: "현재 상태",
+} as const;
+
+interface TrainerImportRow {
+  sourceRow: number;
+  originalName: string;
+  normalizedName: string;
+  branchName: string;
+  jobTitle: string;
+  phoneLast4: string;
+  status: string;
+}
+
+class SheetsImportError extends Error {
+  constructor(public code: string, message: string) {
+    super(message);
+  }
+}
+
+// 0-based 열 인덱스 → A1 표기 열 문자 (0→A, 25→Z, 26→AA ...)
+function columnLetter(index: number): string {
+  let n = index + 1;
+  let letters = "";
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letters;
+}
+
+// 이름 끝의 "1" 또는 "2" 한 글자만 제거한다 (김동현1 → 김동현). 자동 병합에는 사용하지 않고
+// 화면에 정리된 이름 후보로만 표시한다.
+function normalizeTrainerName(name: string): string {
+  return name.trim().replace(/([12])$/, "").trim();
+}
+
+function extractPhoneLast4(raw: string): string {
+  const digits = String(raw ?? "").replace(/\D/g, "");
+  return digits.slice(-4);
+}
+
+async function fetchSheetsAccessToken(email: string, privateKey: string): Promise<string> {
+  const client = new JWT({
+    email,
+    key: privateKey.replace(/\\n/g, "\n"),
+    scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
+  });
+  const token = await client.getAccessToken();
+  if (!token.token) throw new SheetsImportError("internal", "no-access-token");
+  return token.token;
+}
+
+async function sheetsValuesGet(
+  spreadsheetId: string,
+  range: string,
+  accessToken: string
+): Promise<string[][]> {
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
+    spreadsheetId
+  )}/values/${encodeURIComponent(range)}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!res.ok) {
+    if (res.status === 403) throw new SheetsImportError("sheets-access-denied", "access denied");
+    if (res.status === 404 || res.status === 400) {
+      throw new SheetsImportError("sheet-not-found", "sheet/range not found");
+    }
+    throw new SheetsImportError("sheets-fetch-failed", `http ${res.status}`);
+  }
+  const body = (await res.json()) as { values?: string[][] };
+  return body.values ?? [];
+}
+
+async function sheetsValuesBatchGet(
+  spreadsheetId: string,
+  ranges: string[],
+  accessToken: string
+): Promise<string[][][]> {
+  const query = ranges.map((r) => `ranges=${encodeURIComponent(r)}`).join("&");
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
+    spreadsheetId
+  )}/values:batchGet?${query}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!res.ok) {
+    if (res.status === 403) throw new SheetsImportError("sheets-access-denied", "access denied");
+    if (res.status === 404 || res.status === 400) {
+      throw new SheetsImportError("sheet-not-found", "sheet/range not found");
+    }
+    throw new SheetsImportError("sheets-fetch-failed", `http ${res.status}`);
+  }
+  const body = (await res.json()) as { valueRanges?: { values?: string[][] }[] };
+  return (body.valueRanges ?? []).map((vr) => vr.values ?? []);
+}
+
+export const previewTrainerImport = onCall(
+  {
+    region: "asia-northeast3",
+    timeoutSeconds: 60,
+    memory: "256MiB",
+    secrets: [
+      GOOGLE_SHEETS_SPREADSHEET_ID,
+      GOOGLE_SERVICE_ACCOUNT_EMAIL,
+      GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
+    ],
+  },
+  async (request): Promise<{ rows: TrainerImportRow[] }> => {
+    await requireAdmin(request.auth?.uid);
+
+    const spreadsheetId = GOOGLE_SHEETS_SPREADSHEET_ID.value();
+    const serviceAccountEmail = GOOGLE_SERVICE_ACCOUNT_EMAIL.value();
+    const serviceAccountPrivateKey = GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY.value();
+
+    if (!spreadsheetId || !serviceAccountEmail || !serviceAccountPrivateKey) {
+      throw new HttpsError("failed-precondition", "sheets-not-configured");
+    }
+
+    try {
+      const accessToken = await fetchSheetsAccessToken(
+        serviceAccountEmail,
+        serviceAccountPrivateKey
+      );
+
+      // 1) 헤더 행만 조회해 필요한 컬럼의 위치를 찾는다.
+      const headerRows = await sheetsValuesGet(
+        spreadsheetId,
+        `${TRAINER_SHEET_NAME}!1:1`,
+        accessToken
+      );
+      const header = headerRows[0] ?? [];
+      const colIndex = {
+        name: header.indexOf(SHEETS_COLUMN_HEADERS.name),
+        branch: header.indexOf(SHEETS_COLUMN_HEADERS.branch),
+        job: header.indexOf(SHEETS_COLUMN_HEADERS.job),
+        phone: header.indexOf(SHEETS_COLUMN_HEADERS.phone),
+        status: header.indexOf(SHEETS_COLUMN_HEADERS.status),
+      };
+      if (
+        colIndex.name < 0 ||
+        colIndex.branch < 0 ||
+        colIndex.job < 0 ||
+        colIndex.phone < 0 ||
+        colIndex.status < 0
+      ) {
+        throw new SheetsImportError("columns-not-found", "required columns missing");
+      }
+
+      // 2) 필요한 5개 컬럼만 개별 조회한다 — 다른(민감) 컬럼은 요청 자체를 하지 않는다.
+      const ranges = [
+        `${TRAINER_SHEET_NAME}!${columnLetter(colIndex.name)}:${columnLetter(colIndex.name)}`,
+        `${TRAINER_SHEET_NAME}!${columnLetter(colIndex.branch)}:${columnLetter(colIndex.branch)}`,
+        `${TRAINER_SHEET_NAME}!${columnLetter(colIndex.job)}:${columnLetter(colIndex.job)}`,
+        `${TRAINER_SHEET_NAME}!${columnLetter(colIndex.phone)}:${columnLetter(colIndex.phone)}`,
+        `${TRAINER_SHEET_NAME}!${columnLetter(colIndex.status)}:${columnLetter(colIndex.status)}`,
+      ];
+      const [nameCol, branchCol, jobCol, phoneCol, statusCol] = await sheetsValuesBatchGet(
+        spreadsheetId,
+        ranges,
+        accessToken
+      );
+
+      const rowCount = Math.max(
+        nameCol.length,
+        branchCol.length,
+        jobCol.length,
+        phoneCol.length,
+        statusCol.length
+      );
+
+      const cellAt = (col: string[][], i: number) => (col[i]?.[0] ?? "").toString().trim();
+
+      const results: TrainerImportRow[] = [];
+      // i = 0은 헤더 행이므로 1부터 시작
+      for (let i = 1; i < rowCount; i++) {
+        const jobTitle = cellAt(jobCol, i);
+        if (!TR_JOB_TITLES.includes(jobTitle)) continue; // FC/청소/알바/매니저/TR 아닌 팀장 등은 애초에 대상이 아님
+
+        const originalName = cellAt(nameCol, i);
+        if (!originalName) continue;
+
+        results.push({
+          sourceRow: i + 1,
+          originalName,
+          normalizedName: normalizeTrainerName(originalName),
+          branchName: cellAt(branchCol, i),
+          jobTitle,
+          phoneLast4: extractPhoneLast4(cellAt(phoneCol, i)),
+          status: cellAt(statusCol, i),
+        });
+      }
+
+      if (results.length === 0) {
+        throw new SheetsImportError("no-data", "no TR rows found");
+      }
+
+      return { rows: results };
+    } catch (error) {
+      if (error instanceof SheetsImportError) {
+        console.error("[previewTrainerImport] failed", error.code, error.message);
+        const httpsCode =
+          error.code === "sheets-access-denied"
+            ? "permission-denied"
+            : error.code === "sheet-not-found" || error.code === "no-data"
+              ? "not-found"
+              : error.code === "columns-not-found"
+                ? "failed-precondition"
+                : "internal";
+        throw new HttpsError(httpsCode, error.code);
+      }
+      console.error("[previewTrainerImport] unexpected error", (error as Error).message);
+      throw new HttpsError("internal", "sheets-fetch-failed");
+    }
   }
 );
 
