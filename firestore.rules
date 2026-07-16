@@ -353,6 +353,14 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ─── trainerImportBatches (수기 명단 일괄 등록 — 중복 승인 방지 기록) ─────────
+    // 실제 등록 처리는 commitTrainerRosterImport 서버 함수(Admin SDK)만 수행하므로
+    // 클라이언트 쓰기는 항상 차단한다. admin은 처리 이력 조회만 가능하다.
+    match /trainerImportBatches/{batchId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     // ─── managerInvites ───────────────────────────────────────────────────────
     match /managerInvites/{docId} {
       allow read, write: if isAdmin();

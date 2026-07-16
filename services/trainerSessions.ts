@@ -3,6 +3,7 @@ import {
   doc,
   setDoc,
   getDocs,
+  getCountFromServer,
   query,
   where,
   orderBy,
@@ -141,4 +142,13 @@ export async function getAllTrainerSessionsByPeriod(
     )
   );
   return snap.docs.map((d) => ({ ...d.data() } as TrainerSession));
+}
+
+// 트레이너 통합(merge) 검토 화면에서 "이전 대상 trainerId의 기존 세션 개수"를 보여주기 위한 조회.
+// trainerId 단일 필드 where만 사용하므로 별도 복합 색인 없이 동작한다.
+export async function getTrainerSessionCountByTrainerId(trainerId: string): Promise<number> {
+  const snap = await getCountFromServer(
+    query(collection(db, "trainerSessions"), where("trainerId", "==", trainerId))
+  );
+  return snap.data().count;
 }

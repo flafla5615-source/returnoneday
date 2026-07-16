@@ -9,6 +9,7 @@ import { getAllTrainers, updateTrainer } from "@/services/trainers";
 import { getAllTrainerSessionsByPeriod } from "@/services/trainerSessions";
 import TrainerRegisterModal from "@/components/trainers/TrainerRegisterModal";
 import LoadingState from "@/components/common/LoadingState";
+import ConfirmDialog from "@/components/common/ConfirmDialog";
 import { cn, todayYMD } from "@/lib/utils";
 import type { Branch, Trainer, TrainerSession } from "@/types";
 import {
@@ -21,6 +22,7 @@ import {
   SearchIcon,
   AlertTriangleIcon,
   CloudDownloadIcon,
+  ClipboardListIcon,
 } from "lucide-react";
 
 type ActiveFilter = "all" | "active" | "inactive";
@@ -53,6 +55,7 @@ export default function TrainerManagePage() {
   const [editIdentifierMemo, setEditIdentifierMemo] = useState("");
   const [editActive, setEditActive] = useState(true);
   const [editSaving, setEditSaving] = useState(false);
+  const [deactivateConfirmOpen, setDeactivateConfirmOpen] = useState(false);
 
   const monthFrom = format(startOfMonth(new Date()), "yyyy-MM-dd");
   const today = todayYMD();
@@ -126,7 +129,19 @@ export default function TrainerManagePage() {
     setEditId(null);
   }
 
-  async function saveEdit() {
+  function saveEdit() {
+    if (!editId) return;
+    if (!editName.trim()) return;
+    const original = trainers.find((t) => t.id === editId);
+    if (original?.active && !editActive) {
+      // 활성 → 비활성 전환만 확인 다이얼로그를 거친다. 완전 삭제 기능은 제공하지 않는다.
+      setDeactivateConfirmOpen(true);
+      return;
+    }
+    void doSaveEdit();
+  }
+
+  async function doSaveEdit() {
     if (!editId) return;
     const name = editName.trim();
     if (!name) return;
@@ -154,6 +169,7 @@ export default function TrainerManagePage() {
       setEditId(null);
     } finally {
       setEditSaving(false);
+      setDeactivateConfirmOpen(false);
     }
   }
 
@@ -176,6 +192,13 @@ export default function TrainerManagePage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Link
+            href="/admin/trainers/roster-import"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-[#1e3a5f] text-[#1e3a5f] rounded-lg hover:bg-[#1e3a5f]/5"
+          >
+            <ClipboardListIcon className="w-3.5 h-3.5" />
+            트레이너 명단 일괄 등록
+          </Link>
           <Link
             href="/admin/trainers/import"
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-[#1e3a5f] text-[#1e3a5f] rounded-lg hover:bg-[#1e3a5f]/5"
@@ -402,6 +425,16 @@ export default function TrainerManagePage() {
           </table>
         </div>
       )}
+
+      <ConfirmDialog
+        open={deactivateConfirmOpen}
+        title="이 트레이너를 비활성 처리하시겠습니까?"
+        description="기존 세션 기록은 유지되며 신규 세션 입력 목록에서만 제외됩니다."
+        confirmLabel="비활성 처리"
+        danger
+        onConfirm={() => void doSaveEdit()}
+        onCancel={() => setDeactivateConfirmOpen(false)}
+      />
 
       {addOpen && (
         <TrainerRegisterModal

@@ -4,6 +4,7 @@ import { defineSecret } from "firebase-functions/params";
 import * as admin from "firebase-admin";
 import * as nodemailer from "nodemailer";
 import { JWT } from "google-auth-library";
+import * as crypto from "crypto";
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -547,6 +548,236 @@ export const previewTrainerImport = onCall(
       console.error("[previewTrainerImport] unexpected error", (error as Error).message);
       throw new HttpsError("internal", "sheets-fetch-failed");
     }
+  }
+);
+
+// ─── 트레이너 명단 수기 일괄 등록 — 최종 승인 처리 (admin 전용) ─────────────────
+// 구글시트 연동과 무관한 별도 경로. 미리보기·중복 확인은 클라이언트에서 계산하지만,
+// 실제 Firestore 쓰기는 반드시 이 함수를 통해서만 일어난다. 클라이언트가 보낸 결정을
+// 그대로 신뢰하지 않고, 서버가 기존 trainers 컬렉션을 다시 조회해 독립적으로 재검증한다.
+// 이름 유사도로 자동 병합하지 않는다 — 확정된 예외는 "김동현_2" → "김동현" 단 하나뿐이다.
+
+const TRAINER_NAME_ALIASES: Record<string, string> = {
+  "김동현_2": "김동현",
+};
+
+function normalizeRosterName(raw: string): string {
+  const trimmed = raw.trim();
+  return TRAINER_NAME_ALIASES[trimmed] ?? trimmed;
+}
+
+type RosterImportAction = "use_existing" | "create_new" | "merge" | "exclude";
+
+interface RosterImportDecisionInput {
+  finalName?: string;
+  action?: RosterImportAction;
+  matchedTrainerId?: string;
+  mergeKeepTrainerId?: string;
+  mergeFromTrainerIds?: string[];
+}
+
+interface RosterImportItemResult {
+  finalName: string;
+  action: string;
+  status: "success" | "skipped" | "failed";
+  trainerId?: string;
+  message?: string;
+}
+
+// trainerSessions는 최대 500건 batch 제약이 있어 400건씩 나눠 처리한다.
+async function reassignTrainerSessions(
+  fromTrainerId: string,
+  toTrainerId: string,
+  finalName: string
+): Promise<number> {
+  const snap = await db
+    .collection("trainerSessions")
+    .where("trainerId", "==", fromTrainerId)
+    .get();
+
+  const docs = snap.docs;
+  let moved = 0;
+  for (let i = 0; i < docs.length; i += 400) {
+    const chunk = docs.slice(i, i + 400);
+    const batch = db.batch();
+    chunk.forEach((d) => {
+      batch.update(d.ref, {
+        trainerId: toTrainerId,
+        trainerName: finalName,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+    await batch.commit();
+    moved += chunk.length;
+  }
+  return moved;
+}
+
+export const commitTrainerRosterImport = onCall(
+  { region: "asia-northeast3", timeoutSeconds: 300, memory: "256MiB" },
+  async (
+    request
+  ): Promise<{ batchId: string; alreadyProcessed: boolean; results: RosterImportItemResult[] }> => {
+    await requireAdmin(request.auth?.uid);
+    const adminUid = request.auth!.uid;
+
+    const rawText = String(request.data?.rawText ?? "");
+    const decisionsInput = (request.data?.decisions ?? []) as RosterImportDecisionInput[];
+
+    if (!rawText.trim()) {
+      throw new HttpsError("invalid-argument", "명단이 비어 있습니다.");
+    }
+    if (!Array.isArray(decisionsInput) || decisionsInput.length === 0) {
+      throw new HttpsError("invalid-argument", "등록 대상이 없습니다.");
+    }
+
+    // 같은 명단(원본 텍스트) 재승인은 fingerprint로 차단한다 — 중복 생성 방지.
+    const fingerprint = crypto.createHash("sha256").update(rawText.trim()).digest("hex");
+    const batchRef = db.doc(`trainerImportBatches/${fingerprint}`);
+    const existingBatch = await batchRef.get();
+    if (existingBatch.exists) {
+      return {
+        batchId: fingerprint,
+        alreadyProcessed: true,
+        results: (existingBatch.data()?.results ?? []) as RosterImportItemResult[],
+      };
+    }
+
+    // 서버가 독립적으로 기존 트레이너 전체를 다시 조회해 재검증한다.
+    const existingSnap = await db.collection("trainers").get();
+    const existingByName = new Map<string, string[]>(); // name -> trainerId[]
+    existingSnap.docs.forEach((d) => {
+      const name = (d.data().name as string) ?? "";
+      const arr = existingByName.get(name) ?? [];
+      arr.push(d.id);
+      existingByName.set(name, arr);
+    });
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    const results: RosterImportItemResult[] = [];
+
+    for (const decision of decisionsInput) {
+      const finalName = normalizeRosterName(String(decision.finalName ?? ""));
+      const action = decision.action;
+
+      if (!finalName || !action) {
+        results.push({ finalName: finalName || "(빈 이름)", action: "unknown", status: "failed", message: "잘못된 요청입니다." });
+        continue;
+      }
+
+      try {
+        if (action === "exclude") {
+          results.push({ finalName, action, status: "skipped" });
+          continue;
+        }
+
+        if (action === "create_new") {
+          // 재검증: 그 사이 동일 이름이 이미 생겼으면 신규 생성을 취소하고 기존 사용으로 전환한다.
+          const already = existingByName.get(finalName) ?? [];
+          if (already.length === 1) {
+            results.push({
+              finalName,
+              action: "use_existing",
+              status: "success",
+              trainerId: already[0],
+              message: "서버 재검증 중 이미 존재하는 이름으로 확인되어 기존 트레이너를 사용했습니다.",
+            });
+            continue;
+          }
+          if (already.length > 1) {
+            results.push({ finalName, action, status: "failed", message: "동일 이름이 여러 명 존재해 자동 생성을 건너뛰었습니다." });
+            continue;
+          }
+          const ref = await db.collection("trainers").add({
+            name: finalName,
+            active: true,
+            identifierMemo: "본사 확정 명단 일괄 등록",
+            createdBy: adminUid,
+            createdAt: now,
+            updatedAt: now,
+          });
+          existingByName.set(finalName, [ref.id]);
+          results.push({ finalName, action, status: "success", trainerId: ref.id });
+          continue;
+        }
+
+        if (action === "use_existing") {
+          const targetId = decision.matchedTrainerId;
+          if (!targetId) {
+            results.push({ finalName, action, status: "failed", message: "연결할 트레이너가 지정되지 않았습니다." });
+            continue;
+          }
+          const targetRef = db.doc(`trainers/${targetId}`);
+          const targetSnap = await targetRef.get();
+          if (!targetSnap.exists) {
+            results.push({ finalName, action, status: "failed", message: "대상 트레이너를 찾을 수 없습니다." });
+            continue;
+          }
+          if ((targetSnap.data()?.name as string) !== finalName) {
+            await targetRef.update({ name: finalName, updatedAt: now });
+          }
+          results.push({ finalName, action, status: "success", trainerId: targetId });
+          continue;
+        }
+
+        if (action === "merge") {
+          const keepId = decision.mergeKeepTrainerId;
+          const fromIds = (decision.mergeFromTrainerIds ?? []).filter((id) => id && id !== keepId);
+          if (!keepId || fromIds.length === 0) {
+            results.push({ finalName, action, status: "failed", message: "통합 대상이 올바르지 않습니다." });
+            continue;
+          }
+          const keepSnap = await db.doc(`trainers/${keepId}`).get();
+          if (!keepSnap.exists) {
+            results.push({ finalName, action, status: "failed", message: "유지할 트레이너를 찾을 수 없습니다." });
+            continue;
+          }
+
+          let totalMoved = 0;
+          for (const fromId of fromIds) {
+            const fromRef = db.doc(`trainers/${fromId}`);
+            const fromSnap = await fromRef.get();
+            if (!fromSnap.exists) continue;
+
+            const moved = await reassignTrainerSessions(fromId, keepId, finalName);
+            totalMoved += moved;
+
+            const prevMemo = (fromSnap.data()?.identifierMemo as string) ?? "";
+            const mergeNote = `${finalName}(${keepId})로 통합됨 ${new Date().toISOString().slice(0, 10)}`;
+            await fromRef.update({
+              active: false,
+              identifierMemo: prevMemo ? `${prevMemo} / ${mergeNote}` : mergeNote,
+              updatedAt: now,
+            });
+          }
+
+          await db.doc(`trainers/${keepId}`).update({ name: finalName, active: true, updatedAt: now });
+
+          results.push({
+            finalName,
+            action,
+            status: "success",
+            trainerId: keepId,
+            message: `세션 ${totalMoved}건 이전 완료`,
+          });
+          continue;
+        }
+
+        results.push({ finalName, action, status: "failed", message: "알 수 없는 처리 방식입니다." });
+      } catch (error) {
+        console.error("[commitTrainerRosterImport] item failed", finalName, (error as Error).message);
+        results.push({ finalName, action, status: "failed", message: "처리 중 오류가 발생했습니다." });
+      }
+    }
+
+    await batchRef.set({
+      fingerprint,
+      createdBy: adminUid,
+      createdAt: now,
+      results,
+    });
+
+    return { batchId: fingerprint, alreadyProcessed: false, results };
   }
 );
 
