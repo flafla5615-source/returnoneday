@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
-import { getReportById, updateReportStatus } from "@/services/reports";
+import { getReportById, updateReportStatus, moveReportDate, type MoveReportDateResult } from "@/services/reports";
 import { getIssuesByReport } from "@/services/issues";
 import { getBranchesByIds } from "@/services/branches";
 import { ReportStatusBadge, SeverityBadge, IssueStatusBadge } from "@/components/common/StatusBadge";
@@ -12,9 +12,10 @@ import PrintButton from "@/components/print/PrintButton";
 import PrintHeader from "@/components/print/PrintHeader";
 import PrintableSection from "@/components/print/PrintableSection";
 import LoadingState from "@/components/common/LoadingState";
-import { formatDate, formatDateTime, calcPtConversionRate, formatPercent, getExpiringTmTotal, getUnregisteredTmTotal, getOfflinePromoTotal, isAbnormalSubmittedReport } from "@/lib/utils";
+import ConfirmDialog from "@/components/common/ConfirmDialog";
+import { formatDate, formatDateTime, calcPtConversionRate, formatPercent, getExpiringTmTotal, getUnregisteredTmTotal, getOfflinePromoTotal, isAbnormalSubmittedReport, canManageReportDate, getKoreaToday } from "@/lib/utils";
 import type { DailyReport, Issue, ReportStatus } from "@/types";
-import { ChevronLeftIcon } from "lucide-react";
+import { ChevronLeftIcon, CalendarClockIcon, XIcon, AlertTriangleIcon } from "lucide-react";
 
 function Row({ label, value }: { label: string; value: string | number }) {
   return (
@@ -30,6 +31,7 @@ const issueTypeLabel = (t: Issue["type"]) =>
 
 export default function AdminReportDetailPage() {
   const { reportId } = useParams<{ reportId: string }>();
+  const router = useRouter();
   const { profile } = useAuth();
   const [report, setReport] = useState<DailyReport | null | undefined>(undefined);
   const [issues, setIssues] = useState<Issue[]>([]);
@@ -38,6 +40,16 @@ export default function AdminReportDetailPage() {
   const [comment, setComment] = useState("");
   const [showRevisionModal, setShowRevisionModal] = useState(false);
   const [printSections, setPrintSections] = useState<string[]>(["report"]);
+
+  // 보고일 변경
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [moveDate, setMoveDate] = useState("");
+  const [moveConfirmOpen, setMoveConfirmOpen] = useState(false);
+  const [moveLoading, setMoveLoading] = useState(false);
+  const [moveError, setMoveError] = useState<string | null>(null);
+  const [moveConflict, setMoveConflict] = useState<DailyReport | null>(null);
+  const [moveOverwriteConfirmOpen, setMoveOverwriteConfirmOpen] = useState(false);
+  const [moveResult, setMoveResult] = useState<MoveReportDateResult | null>(null);
 
   useEffect(() => {
     if (!reportId) return;
@@ -61,6 +73,75 @@ export default function AdminReportDetailPage() {
     } finally {
       setActionLoading(false);
     }
+  }
+
+  function openMoveModal() {
+    if (!report) return;
+    setMoveDate(report.reportDate);
+    setMoveError(null);
+    setMoveConflict(null);
+    setMoveResult(null);
+    setMoveOpen(true);
+  }
+
+  function closeMoveModal() {
+    setMoveOpen(false);
+    setMoveConflict(null);
+    setMoveError(null);
+    setMoveConfirmOpen(false);
+    setMoveOverwriteConfirmOpen(false);
+  }
+
+  function requestMove() {
+    if (!report) return;
+    setMoveError(null);
+    if (!moveDate) {
+      setMoveError("변경할 날짜를 선택해주세요.");
+      return;
+    }
+    if (moveDate === report.reportDate) {
+      setMoveError("현재 보고일과 동일합니다.");
+      return;
+    }
+    if (canManageReportDate("admin", moveDate) === "future_blocked") {
+      setMoveError("미래 날짜로는 변경할 수 없습니다.");
+      return;
+    }
+    setMoveConfirmOpen(true);
+  }
+
+  async function executeMove(overwrite: boolean) {
+    if (!report) return;
+    setMoveLoading(true);
+    setMoveError(null);
+    try {
+      const result = await moveReportDate(report.id, moveDate, overwrite);
+      if (result.status === "conflict") {
+        setMoveConflict(result.existingTarget ?? null);
+        return;
+      }
+      setMoveResult(result);
+      setMoveConflict(null);
+    } catch (err) {
+      console.error("[AdminReportDetail] moveReportDate failed", err);
+      const code = (err as { message?: string })?.message ?? "";
+      setMoveError(
+        code === "report-not-found"
+          ? "보고서를 찾을 수 없습니다."
+          : code === "same-date"
+            ? "현재 보고일과 동일합니다."
+            : "보고일 변경 중 오류가 발생했습니다. 데이터는 안전하게 보존되었습니다."
+      );
+    } finally {
+      setMoveLoading(false);
+      setMoveConfirmOpen(false);
+      setMoveOverwriteConfirmOpen(false);
+    }
+  }
+
+  function finishMove() {
+    if (!moveResult?.newReportId) return;
+    router.push(`/admin/reports/${moveResult.newReportId}`);
   }
 
   if (report === undefined) return <LoadingState />;
@@ -87,6 +168,14 @@ export default function AdminReportDetailPage() {
           <h1 className="text-base font-bold text-gray-900">{formatDate(report.reportDate)} 보고서</h1>
           <p className="text-xs text-gray-400">{branchName || report.branchId}</p>
         </div>
+        <button
+          type="button"
+          onClick={openMoveModal}
+          className="no-print flex items-center gap-1.5 px-3 py-1.5 text-xs border border-[#1e3a5f] text-[#1e3a5f] rounded-lg hover:bg-[#1e3a5f]/5"
+        >
+          <CalendarClockIcon className="w-3.5 h-3.5" />
+          보고일 변경
+        </button>
         <PrintButton
           sections={[{ key: "report", label: "보고 상세" }]}
           selectedSections={printSections}
@@ -258,6 +347,134 @@ export default function AdminReportDetailPage() {
           </div>
         </div>
       )}
+
+      {moveOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40" onClick={closeMoveModal} />
+          <div className="relative bg-white rounded-xl shadow-xl p-6 w-full max-w-lg mx-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-gray-900">보고일 변경</h3>
+              <button onClick={closeMoveModal} className="text-gray-400 hover:text-gray-600">
+                <XIcon className="w-4 h-4" />
+              </button>
+            </div>
+
+            {moveResult ? (
+              <>
+                <p className="text-sm text-green-700 bg-green-50 border border-green-100 rounded-lg px-3 py-2">
+                  보고일을 {report.reportDate} → {moveDate}(으)로 이동했습니다.
+                </p>
+                <div className="text-xs text-gray-500 space-y-1">
+                  <p>이전된 운영 이슈: {moveResult.movedIssues ?? 0}건</p>
+                  <p>이전된 캠페인 실적: {moveResult.movedCampaignResults ?? 0}건</p>
+                  <p>이전된 트레이너 세션: {moveResult.movedTrainerSessions ?? 0}건</p>
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    onClick={finishMove}
+                    className="px-4 py-2 text-sm bg-[#1e3a5f] text-white rounded-lg hover:bg-[#16304f]"
+                  >
+                    이동된 보고서로 이동
+                  </button>
+                </div>
+              </>
+            ) : moveConflict ? (
+              <>
+                <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                  <AlertTriangleIcon className="w-4 h-4 shrink-0 mt-0.5" />
+                  <p>대상 날짜({moveDate})에 이미 보고서가 있습니다. 자동으로 덮어쓰지 않습니다. 두 보고서를 비교한 뒤 덮어쓰기 또는 취소를 선택해주세요.</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div className="border border-gray-200 rounded-lg p-3">
+                    <p className="text-xs font-medium text-gray-500 mb-2">현재 보고서 ({report.reportDate})</p>
+                    <Row label="상태" value={report.status} />
+                    <Row label="유효회원" value={`${report.activeMembers ?? "-"}명`} />
+                    <Row label="문의" value={`${report.inquiries ?? "-"}건`} />
+                    <Row label="PT 상담" value={`${report.ptConsultations ?? "-"}건`} />
+                  </div>
+                  <div className="border border-amber-200 rounded-lg p-3">
+                    <p className="text-xs font-medium text-amber-600 mb-2">기존 대상 보고서 ({moveDate})</p>
+                    <Row label="상태" value={moveConflict.status} />
+                    <Row label="유효회원" value={`${moveConflict.activeMembers ?? "-"}명`} />
+                    <Row label="문의" value={`${moveConflict.inquiries ?? "-"}건`} />
+                    <Row label="PT 상담" value={`${moveConflict.ptConsultations ?? "-"}건`} />
+                  </div>
+                </div>
+                {moveError && <p className="text-xs text-red-600">{moveError}</p>}
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={closeMoveModal}
+                    className="px-4 py-2 text-sm border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+                  >
+                    취소
+                  </button>
+                  <button
+                    onClick={() => setMoveOverwriteConfirmOpen(true)}
+                    disabled={moveLoading}
+                    className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                  >
+                    {moveLoading ? "처리 중..." : "기존 대상 삭제 후 덮어쓰기"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-gray-500">
+                  현재 보고일: <span className="font-medium text-gray-800">{report.reportDate}</span>
+                </p>
+                <div>
+                  <label className="text-xs font-medium text-gray-700 block mb-1">변경할 보고일</label>
+                  <input
+                    type="date"
+                    value={moveDate}
+                    max={getKoreaToday()}
+                    onChange={(e) => setMoveDate(e.target.value)}
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]"
+                  />
+                </div>
+                <p className="text-xs text-gray-400">
+                  운영 이슈, 캠페인 실적, 트레이너 세션 기록도 함께 이전됩니다. 이동 중 문제가 생기면 기존 보고서는 삭제되지 않습니다.
+                </p>
+                {moveError && <p className="text-xs text-red-600">{moveError}</p>}
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={closeMoveModal}
+                    className="px-4 py-2 text-sm border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+                  >
+                    취소
+                  </button>
+                  <button
+                    onClick={requestMove}
+                    disabled={moveLoading}
+                    className="px-4 py-2 text-sm bg-[#1e3a5f] text-white rounded-lg hover:bg-[#16304f] disabled:opacity-50"
+                  >
+                    {moveLoading ? "처리 중..." : "보고일 변경"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={moveConfirmOpen}
+        title={`보고일을 ${report.reportDate}에서 ${moveDate}(으)로 변경하시겠습니까?`}
+        description="운영 이슈, 캠페인 실적, 트레이너 세션 기록도 함께 이전됩니다."
+        confirmLabel="변경"
+        onConfirm={() => void executeMove(false)}
+        onCancel={() => setMoveConfirmOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={moveOverwriteConfirmOpen}
+        title="기존 대상 날짜의 보고서를 덮어쓰시겠습니까?"
+        description={`${moveDate}에 이미 존재하는 보고서와 연결 데이터가 모두 삭제된 뒤 현재 보고서로 대체됩니다. 되돌릴 수 없습니다.`}
+        confirmLabel="덮어쓰기"
+        danger
+        onConfirm={() => void executeMove(true)}
+        onCancel={() => setMoveOverwriteConfirmOpen(false)}
+      />
     </div>
   );
 }

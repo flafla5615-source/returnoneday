@@ -34,6 +34,35 @@ export function todayYMD(): string {
   return formatDateYMD(nowKST());
 }
 
+// ─── Report date helpers (KST 기준, 브라우저 로컬 시간에 의존하지 않음) ─────────
+// reportDate는 항상 "YYYY-MM-DD" 문자열로 취급한다. Firestore Timestamp와 혼동하지 않는다.
+
+export function getKoreaToday(): string {
+  return todayYMD();
+}
+
+export function getKoreaYesterday(): string {
+  const [y, m, d] = getKoreaToday().split("-").map(Number);
+  const utcMidnight = new Date(Date.UTC(y, m - 1, d));
+  utcMidnight.setUTCDate(utcMidnight.getUTCDate() - 1);
+  return utcMidnight.toISOString().slice(0, 10);
+}
+
+export type ReportDatePermission = "ok" | "future_blocked" | "too_old_blocked";
+
+// branch_manager는 오늘/전일만 신규 작성·선택 가능, admin은 과거 날짜 제한 없음(미래는 항상 차단).
+export function canManageReportDate(
+  role: "admin" | "branch_manager",
+  targetDate: string
+): ReportDatePermission {
+  const today = getKoreaToday();
+  if (targetDate > today) return "future_blocked";
+  if (role === "admin") return "ok";
+  const yesterday = getKoreaYesterday();
+  if (targetDate < yesterday) return "too_old_blocked";
+  return "ok";
+}
+
 export function calcPtConversionRate(
   ptConsultations: number | null,
   ptRegistrations: number | null

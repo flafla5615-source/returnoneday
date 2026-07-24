@@ -50,6 +50,27 @@ service cloud.firestore {
       return status in ['draft', 'revision_required'];
     }
 
+    // ── KST 기준 보고일 범위 검증 (branch_manager 신규 생성 전용) ─────────────
+    // reportDate("YYYY-MM-DD")를 UTC 자정 기준 "일수(day index)"로 변환하고,
+    // request.time(UTC)을 KST(+9h)로 보정한 뒤 같은 방식으로 일수를 구해 비교한다.
+    // 두 값 모두 "에폭 이후 며칠째"라는 동일한 정수 단위이므로 타임존 보정 없이
+    // 직접 비교할 수 있다.
+    function reportDateDayIndex(dateStr) {
+      let p = dateStr.split('-');
+      return int(timestamp.date(int(p[0]), int(p[1]), int(p[2])).toMillis() / 86400000);
+    }
+
+    function kstTodayDayIndex() {
+      return int((request.time.toMillis() + 9 * 3600 * 1000) / 86400000);
+    }
+
+    // branch_manager는 오늘 또는 전일(KST)만 새 보고서를 생성할 수 있다.
+    function isWithinManagerReportDateRange(dateStr) {
+      let idx = reportDateDayIndex(dateStr);
+      let todayIdx = kstTodayDayIndex();
+      return idx >= todayIdx - 1 && idx <= todayIdx;
+    }
+
     function canManagerTransitionReportStatus(currentStatus, nextStatus) {
       return (currentStatus == 'draft' && nextStatus in ['draft', 'submitted']) ||
         (currentStatus == 'revision_required' && nextStatus in ['revision_required', 'submitted']);
@@ -197,13 +218,17 @@ service cloud.firestore {
       allow list: if isAdmin() ||
         (isActiveManager() && resource.data.branchId in getUserData().branchIds);
 
-      allow create: if isActiveManager()
-        && request.resource.data.branchId in getUserData().branchIds
-        && request.resource.data.writerUid == uid()
-        && request.resource.data.id == reportId
-        // reportId must follow {branchId}_{YYYY-MM-DD}
-        && reportId == request.resource.data.branchId + '_' + request.resource.data.reportDate
-        && request.resource.data.status == 'draft';
+      // admin: 보고일 이동(moveReportDate) 시 새 날짜 문서를 생성하기 위해 필요.
+      // branch_manager: 오늘/전일(KST)만 신규 생성 가능, 그 외 필드 제약은 기존과 동일.
+      allow create: if isAdmin() ||
+        (isActiveManager()
+          && request.resource.data.branchId in getUserData().branchIds
+          && request.resource.data.writerUid == uid()
+          && request.resource.data.id == reportId
+          // reportId must follow {branchId}_{YYYY-MM-DD}
+          && reportId == request.resource.data.branchId + '_' + request.resource.data.reportDate
+          && request.resource.data.status == 'draft'
+          && isWithinManagerReportDateRange(request.resource.data.reportDate));
 
       allow update: if
         isAdmin() ||

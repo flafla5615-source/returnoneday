@@ -17,6 +17,7 @@ import {
   updateDoc,
   where,
 } from "firebase/firestore";
+import { getKoreaToday, getKoreaYesterday } from "@/lib/utils";
 
 const PROJECT_ID = "returnoneday-test";
 const RULES_PATH = resolve(__dirname, "../firestore.rules");
@@ -327,13 +328,14 @@ describe("branch manager report access", () => {
 
   test("active managers can create and submit draft reports for assigned branches only", async () => {
     const db = authedDb(MANAGER_UID);
-    const newReportId = reportId(BRANCH_ID, "2026-06-11");
+    const today = getKoreaToday();
+    const newReportId = reportId(BRANCH_ID, today);
 
     await assertSucceeds(
       setDoc(doc(db, "dailyReports", newReportId), {
         id: newReportId,
         branchId: BRANCH_ID,
-        reportDate: "2026-06-11",
+        reportDate: today,
         writerUid: MANAGER_UID,
         status: "draft",
         activeMembers: 320,
@@ -351,15 +353,64 @@ describe("branch manager report access", () => {
       })
     );
 
-    const otherReportId = reportId(OTHER_BRANCH_ID, "2026-06-11");
+    const otherReportId = reportId(OTHER_BRANCH_ID, today);
     await assertFails(
       setDoc(doc(db, "dailyReports", otherReportId), {
         id: otherReportId,
         branchId: OTHER_BRANCH_ID,
-        reportDate: "2026-06-11",
+        reportDate: today,
         writerUid: MANAGER_UID,
         status: "draft",
         activeMembers: 200,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    );
+  });
+
+  test("active managers can create a draft report for yesterday (KST) but not further in the past or future", async () => {
+    const db = authedDb(MANAGER_UID);
+    const yesterday = getKoreaYesterday();
+    const yReportId = reportId(BRANCH_ID, yesterday);
+
+    await assertSucceeds(
+      setDoc(doc(db, "dailyReports", yReportId), {
+        id: yReportId,
+        branchId: BRANCH_ID,
+        reportDate: yesterday,
+        writerUid: MANAGER_UID,
+        status: "draft",
+        activeMembers: 300,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    );
+
+    const oldDate = "2020-01-01";
+    const oldReportId = reportId(BRANCH_ID, oldDate);
+    await assertFails(
+      setDoc(doc(db, "dailyReports", oldReportId), {
+        id: oldReportId,
+        branchId: BRANCH_ID,
+        reportDate: oldDate,
+        writerUid: MANAGER_UID,
+        status: "draft",
+        activeMembers: 100,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    );
+
+    const futureDate = "2099-01-01";
+    const futureReportId = reportId(BRANCH_ID, futureDate);
+    await assertFails(
+      setDoc(doc(db, "dailyReports", futureReportId), {
+        id: futureReportId,
+        branchId: BRANCH_ID,
+        reportDate: futureDate,
+        writerUid: MANAGER_UID,
+        status: "draft",
+        activeMembers: 100,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       })

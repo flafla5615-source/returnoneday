@@ -5,6 +5,7 @@ import {
   getDocs,
   setDoc,
   updateDoc,
+  deleteDoc,
   query,
   where,
   orderBy,
@@ -13,8 +14,9 @@ import {
   limit,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import type { DailyReport, ReportStatus, ReportComment } from "@/types";
+import type { DailyReport, ReportStatus, ReportComment, Issue, CampaignResult } from "@/types";
 import { getReportId, isAbnormalSubmittedReport, removeUndefinedDeep } from "@/lib/utils";
+import { trainerSessionId, getTrainerSessionsByBranchAndDate } from "@/services/trainerSessions";
 
 export async function getReport(
   branchId: string,
@@ -243,4 +245,164 @@ export async function getReportComments(
     )
   );
   return snap.docs.map((d) => d.data() as ReportComment);
+}
+
+// ─── 관리자 전용: 잘못 저장된 보고일 이동 ─────────────────────────────────────
+// 21일 업무가 22일 문서로 잘못 저장된 사례를 복구하기 위한 기능.
+// 새 문서를 만들고 연결 데이터(이슈/캠페인 실적/트레이너 세션)까지 모두 옮긴 뒤,
+// 마지막에만 기존 문서를 삭제한다 — 중간에 실패하면 기존 문서는 그대로 남는다.
+
+async function moveIssuesForReport(
+  oldReportId: string,
+  newReportId: string,
+  newReportDate: string
+): Promise<number> {
+  const snap = await getDocs(collection(db, "dailyReports", oldReportId, "issues"));
+  let moved = 0;
+  for (const d of snap.docs) {
+    const data = { ...(d.data() as Issue), reportId: newReportId, reportDate: newReportDate };
+    await setDoc(doc(db, "dailyReports", newReportId, "issues", d.id), data);
+    await setDoc(doc(db, "issues", d.id), data);
+    await deleteDoc(d.ref);
+    moved += 1;
+  }
+  return moved;
+}
+
+async function moveCampaignResultsForReport(
+  oldReportId: string,
+  newReportId: string,
+  newReportDate: string
+): Promise<number> {
+  const snap = await getDocs(
+    query(collection(db, "campaignResults"), where("reportId", "==", oldReportId))
+  );
+  let moved = 0;
+  for (const d of snap.docs) {
+    const data = d.data() as CampaignResult;
+    const newId = `${data.campaignId}_${newReportId}`;
+    await setDoc(doc(db, "campaignResults", newId), {
+      ...data,
+      id: newId,
+      reportId: newReportId,
+      reportDate: newReportDate,
+    });
+    await deleteDoc(d.ref);
+    moved += 1;
+  }
+  return moved;
+}
+
+async function moveTrainerSessionsForDate(
+  branchId: string,
+  oldDate: string,
+  newDate: string
+): Promise<number> {
+  const sessions = await getTrainerSessionsByBranchAndDate(branchId, oldDate);
+  let moved = 0;
+  for (const s of sessions) {
+    const newId = trainerSessionId(branchId, newDate, s.trainerId);
+    await setDoc(doc(db, "trainerSessions", newId), { ...s, id: newId, date: newDate });
+    await deleteDoc(doc(db, "trainerSessions", s.id));
+    moved += 1;
+  }
+  return moved;
+}
+
+async function deleteReportRelatedData(
+  reportIdToClear: string,
+  branchId: string,
+  date: string
+): Promise<void> {
+  const issuesSnap = await getDocs(collection(db, "dailyReports", reportIdToClear, "issues"));
+  for (const d of issuesSnap.docs) {
+    await deleteDoc(d.ref);
+    await deleteDoc(doc(db, "issues", d.id));
+  }
+  const campaignSnap = await getDocs(
+    query(collection(db, "campaignResults"), where("reportId", "==", reportIdToClear))
+  );
+  for (const d of campaignSnap.docs) {
+    await deleteDoc(d.ref);
+  }
+  const sessions = await getTrainerSessionsByBranchAndDate(branchId, date);
+  for (const s of sessions) {
+    await deleteDoc(doc(db, "trainerSessions", s.id));
+  }
+}
+
+export interface MoveReportDateResult {
+  status: "conflict" | "success";
+  existingTarget?: DailyReport;
+  newReportId?: string;
+  movedIssues?: number;
+  movedCampaignResults?: number;
+  movedTrainerSessions?: number;
+}
+
+/**
+ * 잘못 저장된 보고일을 이동한다 (admin 전용 — 호출부에서 admin 권한을 확인해야 함).
+ * - 대상 날짜에 이미 보고서가 있으면 overwrite=false일 때 자동 덮어쓰기 없이 conflict를 반환한다.
+ * - overwrite=true로 재호출하면 대상 보고서와 그 연결 데이터를 먼저 정리한 뒤 이동한다.
+ * - 연결 데이터(이슈/캠페인 실적/트레이너 세션) 이전까지 모두 끝난 뒤에만 기존 문서를 삭제한다.
+ *   중간 단계에서 예외가 발생하면 기존 문서는 삭제되지 않는다.
+ */
+export async function moveReportDate(
+  reportId: string,
+  newDate: string,
+  overwrite = false
+): Promise<MoveReportDateResult> {
+  const oldSnap = await getDoc(doc(db, "dailyReports", reportId));
+  if (!oldSnap.exists()) {
+    throw new Error("report-not-found");
+  }
+  const oldReport = oldSnap.data() as DailyReport;
+
+  if (oldReport.reportDate === newDate) {
+    throw new Error("same-date");
+  }
+
+  const newReportId = getReportId(oldReport.branchId, newDate);
+  const targetSnap = await getDoc(doc(db, "dailyReports", newReportId));
+
+  if (targetSnap.exists() && !overwrite) {
+    return { status: "conflict", existingTarget: targetSnap.data() as DailyReport };
+  }
+
+  if (targetSnap.exists() && overwrite) {
+    await deleteReportRelatedData(newReportId, oldReport.branchId, newDate);
+    await deleteDoc(doc(db, "dailyReports", newReportId));
+  }
+
+  const now = Timestamp.now();
+  await setDoc(doc(db, "dailyReports", newReportId), {
+    ...oldReport,
+    id: newReportId,
+    reportDate: newDate,
+    updatedAt: now,
+  });
+
+  const verifySnap = await getDoc(doc(db, "dailyReports", newReportId));
+  if (!verifySnap.exists()) {
+    throw new Error("move-failed-new-doc-not-saved");
+  }
+
+  const movedIssues = await moveIssuesForReport(reportId, newReportId, newDate);
+  const movedCampaignResults = await moveCampaignResultsForReport(reportId, newReportId, newDate);
+  const movedTrainerSessions = await moveTrainerSessionsForDate(
+    oldReport.branchId,
+    oldReport.reportDate,
+    newDate
+  );
+
+  // 연결 데이터까지 모두 이전된 뒤에만 기존 문서를 삭제한다.
+  await deleteDoc(doc(db, "dailyReports", reportId));
+
+  return {
+    status: "success",
+    newReportId,
+    movedIssues,
+    movedCampaignResults,
+    movedTrainerSessions,
+  };
 }

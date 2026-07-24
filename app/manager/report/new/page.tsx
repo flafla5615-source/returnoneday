@@ -20,12 +20,14 @@ import NumberInput from "@/components/reports/NumberInput";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
 import LoadingState from "@/components/common/LoadingState";
 import {
-  todayYMD,
   formatDate,
   calcPtConversionRate,
   formatPercent,
   getReportId,
   isAbnormalSubmittedReport,
+  getKoreaToday,
+  getKoreaYesterday,
+  canManageReportDate,
 } from "@/lib/utils";
 import type { Branch, DailyReport, Issue, Campaign, Trainer } from "@/types";
 import { format, subDays } from "date-fns";
@@ -90,9 +92,13 @@ export default function NewReportPage() {
 
   const searchParams = useSearchParams();
   const requestedBranchId = searchParams?.get("branchId") ?? "";
-  const reportDate = searchParams?.get("date") ?? todayYMD();
+  const todayDate = getKoreaToday();
+  const allowedYesterdayDate = getKoreaYesterday();
+  const reportDate = searchParams?.get("date") ?? todayDate;
   const ymd = format(subDays(new Date(reportDate), 1), "yyyy-MM-dd");
   const reportId = selectedBranchId ? getReportId(selectedBranchId, reportDate) : "";
+  const datePermission = canManageReportDate("branch_manager", reportDate);
+  const isDateAllowed = datePermission === "ok";
 
   // Step 1 fields
   const [activeMembers, setActiveMembers] = useState<number | null>(null);
@@ -366,7 +372,9 @@ export default function NewReportPage() {
   const autoSave = useCallback(async () => {
     if (!selectedBranchId || !user) return;
     if (loading) return;
-    const canEditReport = !existing || existing.status === "draft" || existing.status === "revision_required";
+    const canEditReport = existing
+      ? existing.status === "draft" || existing.status === "revision_required"
+      : isDateAllowed;
     if (!canEditReport) return;
     if (!existing && !hasAnyReportInput()) return;
     setSaving(true);
@@ -377,7 +385,7 @@ export default function NewReportPage() {
     } finally {
       setSaving(false);
     }
-  }, [selectedBranchId, reportDate, user, loading, existing, collectData, hasAnyReportInput]);
+  }, [selectedBranchId, reportDate, user, loading, existing, collectData, hasAnyReportInput, isDateAllowed]);
 
   const triggerDebounce = useCallback(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -412,7 +420,9 @@ export default function NewReportPage() {
       return;
     }
 
-    const canEditReport = !existing || existing.status === "draft" || existing.status === "revision_required";
+    const canEditReport = existing
+      ? existing.status === "draft" || existing.status === "revision_required"
+      : isDateAllowed;
     if (!canEditReport) return;
 
     if (existing && existing.branchId !== selectedBranchId) {
@@ -555,18 +565,45 @@ export default function NewReportPage() {
   const isLocked = existing?.status === "locked";
   const isSubmitted = existing?.status === "submitted";
   const isRevisionRequired = existing?.status === "revision_required";
-  const canEditReport = !existing || existing.status === "draft" || isRevisionRequired;
+  const canEditReport = existing ? (existing.status === "draft" || isRevisionRequired) : isDateAllowed;
   const isDataMissing = isAbnormalSubmittedReport(existing);
+  const blockedNewReport = !existing && !isDateAllowed;
+
+  function handleDateChange(nextDate: string) {
+    setLoading(true);
+    router.replace(`/manager/report/new?branchId=${selectedBranchId}&date=${nextDate}`);
+  }
 
   return (
     <div className="max-w-2xl mx-auto space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-base font-bold text-gray-900">일일보고 작성</h1>
           <p className="text-xs text-gray-400">{formatDate(reportDate)}</p>
         </div>
         <div className="flex items-center gap-2">
+          {!blockedNewReport ? (
+            <select
+              value={reportDate}
+              onChange={(e) => handleDateChange(e.target.value)}
+              className="border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white"
+            >
+              <option value={todayDate}>오늘 ({todayDate})</option>
+              <option value={allowedYesterdayDate}>전일 ({allowedYesterdayDate})</option>
+              {reportDate !== todayDate && reportDate !== allowedYesterdayDate && (
+                <option value={reportDate}>{reportDate}</option>
+              )}
+            </select>
+          ) : (
+            <button
+              type="button"
+              onClick={() => handleDateChange(todayDate)}
+              className="border border-red-200 text-red-700 bg-red-50 rounded-lg px-2 py-1 text-xs hover:bg-red-100"
+            >
+              오늘 날짜로 이동
+            </button>
+          )}
           {branches.length > 1 && (
             <select
               value={selectedBranchId}
@@ -583,6 +620,31 @@ export default function NewReportPage() {
           )}
         </div>
       </div>
+
+      <p className="text-xs text-gray-400">
+        오늘 또는 전일 업무보고를 작성할 수 있습니다. 자정 이후 전일 업무를 작성하는 경우 보고일을 전일로 선택해주세요.
+      </p>
+
+      {blockedNewReport && datePermission === "future_blocked" && (
+        <div className="bg-red-50 text-red-700 border border-red-100 rounded-xl px-4 py-3 text-sm">
+          미래 날짜의 업무보고는 작성할 수 없습니다.
+        </div>
+      )}
+      {blockedNewReport && datePermission === "too_old_blocked" && (
+        <div className="bg-red-50 text-red-700 border border-red-100 rounded-xl px-4 py-3 text-sm">
+          지난 보고서 수정은 본사 관리자에게 요청해주세요.
+        </div>
+      )}
+      {!blockedNewReport && !existing && reportDate === allowedYesterdayDate && (
+        <div className="bg-blue-50 text-blue-700 border border-blue-100 rounded-xl px-4 py-3 text-sm">
+          전일 업무보고를 작성하고 있습니다.
+        </div>
+      )}
+      {existing && (
+        <div className="bg-gray-50 text-gray-600 border border-gray-200 rounded-xl px-4 py-3 text-sm">
+          선택한 날짜의 기존 보고서를 불러왔습니다.
+        </div>
+      )}
 
       {isLocked && (
         <div className="bg-gray-100 text-gray-600 rounded-xl px-4 py-3 text-sm">
@@ -1137,7 +1199,7 @@ export default function NewReportPage() {
               disabled={!canEditReport || saving}
               className="px-3 py-2 text-sm border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
             >
-              임시 저장
+              {existing ? "보고서 수정" : "보고서 저장"}
             </button>
             {step < 5 ? (
               <button
