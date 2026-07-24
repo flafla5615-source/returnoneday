@@ -481,7 +481,7 @@ export default function AdminUsersPage() {
     setEditName(u.name);
     setEditRole(u.role);
     setEditStatus(u.status);
-    setEditBranchIds(u.branchIds);
+    setEditBranchIds(u.branchIds ?? []);
   }
 
   async function saveEditUser() {
@@ -989,11 +989,13 @@ export default function AdminUsersPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-500">
-                        {u.branchIds.length > 0
-                          ? u.branchIds
-                              .map((id) => branches.find((b) => b.id === id)?.name ?? id)
-                              .join(", ")
-                          : "-"}
+                        {u.role === "admin"
+                          ? "전 지점"
+                          : (u.branchIds ?? []).length > 0
+                            ? (u.branchIds ?? [])
+                                .map((id) => branches.find((b) => b.id === id)?.name ?? id)
+                                .join(", ")
+                            : "-"}
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-400">
                         {u.createdAt
