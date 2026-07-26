@@ -6,7 +6,7 @@ import Link from "next/link";
 import { getAllBranches } from "@/services/branches";
 import { getTodayAllReports, getAllReports } from "@/services/reports";
 import { getAllIssues } from "@/services/issues";
-import { getAllCampaigns } from "@/services/campaigns";
+import { getActivePromotionsAcrossBranches } from "@/services/promotions";
 import KpiCard from "@/components/dashboard/KpiCard";
 import SubmissionDonut from "@/components/dashboard/SubmissionDonut";
 import ConversionFunnel from "@/components/dashboard/ConversionFunnel";
@@ -29,7 +29,7 @@ import {
   getUnregisteredTmTotal,
   getOfflinePromoTotal,
 } from "@/lib/utils";
-import type { Branch, DailyReport, Issue, Campaign } from "@/types";
+import type { Branch, DailyReport, Issue, Promotion } from "@/types";
 import { format, subDays } from "date-fns";
 import { XIcon, ChevronDownIcon, ChevronRightIcon, ChevronLeftIcon } from "lucide-react";
 
@@ -67,7 +67,7 @@ const PRINT_SECTIONS = [
   { key: "trainer", label: "트레이너 세션 실적" },
   { key: "week7", label: "최근 7일 실적" },
   { key: "issues", label: "운영 이슈" },
-  { key: "campaigns", label: "캠페인 실적" },
+  { key: "campaigns", label: "프로모션 관리" },
 ];
 
 // ── Main page ─────────────────────────────────────────────────────────────────
@@ -80,7 +80,7 @@ export default function AdminDashboardPage() {
   const [reports, setReports] = useState<DailyReport[]>([]);
   const [reports7d, setReports7d] = useState<DailyReport[]>([]);
   const [issues, setIssues] = useState<Issue[]>([]);
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [activePromotions, setActivePromotions] = useState<Promotion[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -131,11 +131,11 @@ export default function AdminDashboardPage() {
       setLoading(true);
       setError(null);
       try {
-        const [bs, rs, iss, cps, rs7d] = await Promise.all([
+        const [bs, rs, iss, promos, rs7d] = await Promise.all([
           getAllBranches(),
           getTodayAllReports(selectedDate),
           getAllIssues({ fromDate: selectedDate, toDate: selectedDate }),
-          getAllCampaigns(),
+          getActivePromotionsAcrossBranches(selectedDate),
           getAllReports(from7, todayReal),
         ]);
         if (cancelled) return;
@@ -143,7 +143,7 @@ export default function AdminDashboardPage() {
         setReports(rs);
         setReports7d(rs7d);
         setIssues(iss);
-        setCampaigns(cps.filter((c) => c.status === "active"));
+        setActivePromotions(promos);
       } catch (err) {
         if (cancelled) return;
         const code: string = (err as { code?: string })?.code ?? "unknown";
@@ -274,6 +274,8 @@ export default function AdminDashboardPage() {
 
   const openIssues    = issues.filter((i) => i.status !== "resolved");
   const criticalIssues = openIssues.filter((i) => i.severity === "critical");
+
+  const branchNameOf = (id: string) => branches.find((b) => b.id === id)?.name ?? id;
 
   return (
     <div className="space-y-6">
@@ -603,24 +605,35 @@ export default function AdminDashboardPage() {
       </div>
       </PrintableSection>
 
-      {/* Active campaigns */}
+      {/* 진행 중 프로모션 — 선택한 기준일에 기간이 걸쳐 있는 active 프로모션 */}
       <PrintableSection sectionKey="campaigns" selectedSections={printSections}>
-      {campaigns.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-          <p className="text-sm font-semibold text-gray-700 mb-3">진행 중 캠페인</p>
+      <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-sm font-semibold text-gray-700">진행 중 프로모션</p>
+          <Link href="/admin/promotions" className="text-xs text-blue-600 hover:underline no-print">
+            프로모션 관리
+          </Link>
+        </div>
+        {activePromotions.length === 0 ? (
+          <p className="text-sm text-gray-400">선택한 날짜에 진행 중인 프로모션이 없습니다.</p>
+        ) : (
           <div className="space-y-2">
-            {campaigns.map((c) => (
-              <div key={c.id} className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-800">{c.name}</p>
-                  <p className="text-xs text-gray-400">{formatDate(c.startDate)} ~ {formatDate(c.endDate)}</p>
+            {activePromotions.map((p) => (
+              <div key={p.id} className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-800 truncate">{p.name}</p>
+                  <p className="text-xs text-gray-400">
+                    {branchNameOf(p.branchId)} · {formatDate(p.startDate)} ~ {formatDate(p.endDate)}
+                  </p>
                 </div>
-                <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">진행중</span>
+                <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full shrink-0">
+                  진행 중
+                </span>
               </div>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
       </PrintableSection>
     </div>
   );

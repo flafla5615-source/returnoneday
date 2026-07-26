@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { getBranchesByIds } from "@/services/branches";
 import { getReport, getRecentReports, reopenAbnormalSubmittedReport } from "@/services/reports";
-import { getActiveCampaigns } from "@/services/campaigns";
+import { getActivePromotionsForDate } from "@/services/promotions";
 import { getAllIssues } from "@/services/issues";
 import KpiCard from "@/components/dashboard/KpiCard";
 import TrendChart from "@/components/dashboard/TrendChart";
@@ -22,7 +22,7 @@ import {
   diffLabel,
   isAbnormalSubmittedReport,
 } from "@/lib/utils";
-import type { Branch, DailyReport, Campaign, Issue } from "@/types";
+import type { Branch, DailyReport, Promotion, Issue } from "@/types";
 import { format, subDays } from "date-fns";
 import { AlertCircleIcon, PlusCircleIcon } from "lucide-react";
 
@@ -34,7 +34,7 @@ export default function ManagerHomePage() {
   const [todayReport, setTodayReport] = useState<DailyReport | null | undefined>(undefined);
   const [yesterdayReport, setYesterdayReport] = useState<DailyReport | null>(null);
   const [recentReports, setRecentReports] = useState<DailyReport[]>([]);
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [activePromotions, setActivePromotions] = useState<Promotion[]>([]);
   const [issues, setIssues] = useState<Issue[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -74,7 +74,7 @@ export default function ManagerHomePage() {
           getReport(selectedBranchId, today),
           getReport(selectedBranchId, yesterday),
           getRecentReports(selectedBranchId, 7),
-          getActiveCampaigns(selectedBranchId),
+          getActivePromotionsForDate(selectedBranchId, today),
           getAllIssues({ branchId: selectedBranchId, status: "open" }),
         ]);
         if (cancelled) return;
@@ -90,7 +90,7 @@ export default function ManagerHomePage() {
         setTodayReport(tr);
         setYesterdayReport(yr);
         setRecentReports(rr);
-        setCampaigns(ac);
+        setActivePromotions(ac);
         setIssues(iss);
       } catch (err) {
         console.error("dashboard load failed:", err);
@@ -189,7 +189,7 @@ export default function ManagerHomePage() {
               setTodayReport(undefined);
               setYesterdayReport(null);
               setRecentReports([]);
-              setCampaigns([]);
+              setActivePromotions([]);
               setIssues([]);
               setLoadError(null);
               setSelectedBranchId(newId);
@@ -304,16 +304,23 @@ export default function ManagerHomePage() {
         )}
       </div>
 
-      {/* Active campaigns */}
-      {campaigns.length > 0 && (
+      {/* 진행 중 프로모션 — 오늘 기준 담당 지점의 active 프로모션 */}
+      {activePromotions.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-          <p className="text-sm font-semibold text-gray-700 mb-3">진행 중 캠페인</p>
-          {campaigns.map((c) => (
-            <div key={c.id} className="text-sm">
-              <p className="font-medium text-gray-800">{c.name}</p>
-              <p className="text-xs text-gray-400">기간: {formatDate(c.startDate)} ~ {formatDate(c.endDate)}</p>
-            </div>
-          ))}
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm font-semibold text-gray-700">진행 중 프로모션</p>
+            <Link href="/manager/promotions" className="text-xs text-red-600 hover:underline">
+              프로모션 관리
+            </Link>
+          </div>
+          <div className="space-y-2">
+            {activePromotions.map((p) => (
+              <div key={p.id} className="text-sm">
+                <p className="font-medium text-gray-800">{p.name}</p>
+                <p className="text-xs text-gray-400">기간: {formatDate(p.startDate)} ~ {formatDate(p.endDate)}</p>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

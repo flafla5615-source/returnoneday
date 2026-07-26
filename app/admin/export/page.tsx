@@ -84,6 +84,7 @@ const issueColumns = [
   { header: "해결 시간", key: "resolvedAt", width: 22 },
 ];
 
+// 기존 캠페인 실적 (deprecated — 프로모션 관리로 대체됨). 과거 데이터 보존용.
 const campaignResultColumns = [
   { header: "날짜", key: "date", width: 14 },
   { header: "브랜드", key: "brand", width: 16 },
@@ -93,6 +94,39 @@ const campaignResultColumns = [
   { header: "지표", key: "metricLabel", width: 20 },
   { header: "값", key: "metricValue", width: 12 },
   { header: "수정 시간", key: "updatedAt", width: 22 },
+];
+
+// 프로모션 관리 — 일일 홍보 활동 행 단위
+const promotionColumns = [
+  { header: "날짜", key: "date", width: 14 },
+  { header: "브랜드", key: "brand", width: 16 },
+  { header: "지역", key: "region", width: 16 },
+  { header: "지점명", key: "branchName", width: 22 },
+  { header: "프로모션", key: "promotionName", width: 24 },
+  { header: "구분", key: "kind", width: 10 },
+  { header: "채널·종류", key: "channelOrType", width: 20 },
+  { header: "건수·수량", key: "countOrQuantity", width: 12 },
+  { header: "위치", key: "location", width: 20 },
+  { header: "비용(원)", key: "cost", width: 14 },
+  { header: "링크", key: "link", width: 36 },
+  { header: "메모", key: "memo", width: 28 },
+];
+
+// 프로모션 성과 — 보고서(지점·날짜) 단위 요약
+const promotionSummaryColumns = [
+  { header: "날짜", key: "date", width: 14 },
+  { header: "브랜드", key: "brand", width: 16 },
+  { header: "지역", key: "region", width: 16 },
+  { header: "지점명", key: "branchName", width: 22 },
+  { header: "프로모션", key: "promotionName", width: 24 },
+  { header: "온라인 비용(원)", key: "onlineCost", width: 16 },
+  { header: "오프라인 비용(원)", key: "offlineCost", width: 16 },
+  { header: "총비용(원)", key: "totalCost", width: 14 },
+  { header: "문의", key: "inquiryCount", width: 10 },
+  { header: "방문", key: "visitCount", width: 10 },
+  { header: "등록", key: "registrationCount", width: 10 },
+  { header: "매출(원)", key: "salesAmount", width: 16 },
+  { header: "메모", key: "note", width: 28 },
 ];
 
 // 트레이너 세션 시트 — 금액 컬럼은 절대 포함하지 않는다
@@ -300,7 +334,7 @@ export default function AdminExportPage() {
         filteredCampaignResults.length === 0 &&
         filteredTrainerReports.length === 0
       ) {
-        setError("선택한 조건에 해당하는 보고, 이슈, 캠페인, 트레이너 세션 데이터가 없습니다.");
+        setError("선택한 조건에 해당하는 보고, 이슈, 프로모션, 트레이너 세션 데이터가 없습니다.");
         return;
       }
 
@@ -385,8 +419,123 @@ export default function AdminExportPage() {
         styleWorksheet(issueSheet);
       }
 
+      // 프로모션 관리 — 일일보고 원본(reportDate 기준)에서 홍보 활동 행을 펼쳐 내보낸다.
+      type PromotionExportRow = {
+        date: string;
+        brand: string;
+        region: string;
+        branchName: string;
+        promotionName: string;
+        kind: string;
+        channelOrType: string;
+        countOrQuantity: number | string;
+        location: string;
+        cost: number;
+        link: string;
+        memo: string;
+      };
+      const promotionRows: PromotionExportRow[] = filtered.flatMap((report: DailyReport): PromotionExportRow[] => {
+        const branch = branchMap[report.branchId];
+        const base = {
+          date: formatDate(report.reportDate),
+          brand: branch?.brand ?? "",
+          region: branch?.region ?? "",
+          branchName: branch?.name ?? report.branchId,
+          promotionName: report.promotionName || "프로모션 없음",
+        };
+        const online = (report.onlinePromotionActivities ?? []).map((a) => ({
+          ...base,
+          kind: "온라인",
+          channelOrType: a.channel,
+          countOrQuantity: a.count,
+          location: "",
+          cost: a.cost,
+          link: a.link ?? "",
+          memo: a.memo ?? "",
+        }));
+        const offline = (report.offlinePromotionActivities ?? []).map((a) => ({
+          ...base,
+          kind: "오프라인",
+          channelOrType: a.type,
+          countOrQuantity: a.quantity,
+          location: a.location ?? "",
+          cost: a.cost,
+          link: "",
+          memo: a.memo ?? "",
+        }));
+        // 활동이 없어도 성과·비용·활동없음 기록이 있으면 요약 1행을 남긴다.
+        if (online.length === 0 && offline.length === 0) {
+          const hasPromotionRecord =
+            report.hasNoPromotionActivity === true ||
+            (report.totalPromotionCost ?? 0) > 0 ||
+            (report.promotionInquiryCount ?? 0) > 0 ||
+            (report.promotionVisitCount ?? 0) > 0 ||
+            (report.promotionRegistrationCount ?? 0) > 0 ||
+            (report.promotionSalesAmount ?? 0) > 0;
+          if (!hasPromotionRecord) return [];
+          return [{
+            ...base,
+            kind: report.hasNoPromotionActivity ? "활동 없음" : "요약",
+            channelOrType: "",
+            countOrQuantity: "",
+            location: "",
+            cost: report.totalPromotionCost ?? 0,
+            link: "",
+            memo: report.promotionNote ?? "",
+          }];
+        }
+        return [...online, ...offline];
+      });
+
+      if (promotionRows.length > 0) {
+        const promotionSheet = workbook.addWorksheet("프로모션 관리");
+        promotionSheet.columns = promotionColumns;
+        promotionSheet.views = [{ state: "frozen", ySplit: 1 }];
+        promotionRows.forEach((row) => promotionSheet.addRow(row));
+        styleWorksheet(promotionSheet);
+      }
+
+      // 프로모션 성과 요약 — 보고서 단위 (일별 성과·비용 집계 확인용)
+      const promotionSummaryRows = filtered
+        .filter(
+          (r: DailyReport) =>
+            r.hasNoPromotionActivity === true ||
+            (r.totalPromotionCost ?? 0) > 0 ||
+            (r.promotionInquiryCount ?? 0) > 0 ||
+            (r.promotionVisitCount ?? 0) > 0 ||
+            (r.promotionRegistrationCount ?? 0) > 0 ||
+            (r.promotionSalesAmount ?? 0) > 0
+        )
+        .map((report: DailyReport) => {
+          const branch = branchMap[report.branchId];
+          return {
+            date: formatDate(report.reportDate),
+            brand: branch?.brand ?? "",
+            region: branch?.region ?? "",
+            branchName: branch?.name ?? report.branchId,
+            promotionName: report.promotionName || "프로모션 없음",
+            onlineCost: report.onlinePromotionCost ?? 0,
+            offlineCost: report.offlinePromotionCost ?? 0,
+            totalCost: report.totalPromotionCost ?? 0,
+            inquiryCount: report.promotionInquiryCount ?? "",
+            visitCount: report.promotionVisitCount ?? "",
+            registrationCount: report.promotionRegistrationCount ?? "",
+            salesAmount: report.promotionSalesAmount ?? "",
+            note: report.promotionNote ?? "",
+          };
+        });
+
+      if (promotionSummaryRows.length > 0) {
+        const summarySheet = workbook.addWorksheet("프로모션 성과");
+        summarySheet.columns = promotionSummaryColumns;
+        summarySheet.views = [{ state: "frozen", ySplit: 1 }];
+        promotionSummaryRows.forEach((row) => summarySheet.addRow(row));
+        styleWorksheet(summarySheet);
+      }
+
       if (filteredCampaignResults.length > 0) {
-        const campaignSheet = workbook.addWorksheet("캠페인 실적");
+        // 프로모션 관리로 전환되기 전 데이터 — 시트명으로 레거시임을 구분한다.
+        const campaignSheet = workbook.addWorksheet("기존 캠페인 실적");
         campaignSheet.columns = campaignResultColumns;
         campaignSheet.views = [{ state: "frozen", ySplit: 1 }];
 

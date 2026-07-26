@@ -110,6 +110,19 @@ export async function getCampaignResultsByDateRange(
   return snap.docs.map((d) => d.data() as CampaignResult);
 }
 
+/**
+ * 특정 보고서에 연결된 과거 캠페인 실적 (읽기 전용 조회 전용).
+ * 프로모션 관리로 전환된 뒤에는 신규 저장이 없고, 과거 기록 표시에만 사용한다.
+ */
+export async function getCampaignResultsByReportId(
+  reportId: string
+): Promise<CampaignResult[]> {
+  const snap = await getDocs(
+    query(collection(db, "campaignResults"), where("reportId", "==", reportId))
+  );
+  return snap.docs.map((d) => d.data() as CampaignResult);
+}
+
 export async function getCampaignResultByReport(
   campaignId: string,
   reportId: string

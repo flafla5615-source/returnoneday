@@ -7,7 +7,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { getBranchesByIds } from "@/services/branches";
 import { getReport, reopenAbnormalSubmittedReport, upsertReport } from "@/services/reports";
 import { getIssuesByReport, upsertIssues } from "@/services/issues";
-import { getActiveCampaigns, upsertCampaignResult, getCampaignResultByReport } from "@/services/campaigns";
+import { getActivePromotionsForDate, sanitizeAmount } from "@/services/promotions";
 import { getAllTrainers } from "@/services/trainers";
 import {
   upsertTrainerSession,
@@ -28,10 +28,21 @@ import {
   getKoreaToday,
   getKoreaYesterday,
   canManageReportDate,
+  getOfflinePromoTotal,
+  formatNumber,
 } from "@/lib/utils";
-import type { Branch, DailyReport, Issue, Campaign, Trainer } from "@/types";
+import type {
+  Branch,
+  DailyReport,
+  Issue,
+  Trainer,
+  Promotion,
+  OnlinePromotionActivity,
+  OfflinePromotionActivity,
+} from "@/types";
+import { ONLINE_PROMOTION_CHANNELS, OFFLINE_PROMOTION_TYPES } from "@/types";
 import { format, subDays } from "date-fns";
-import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
+import { ChevronLeftIcon, ChevronRightIcon, PlusIcon, TrashIcon } from "lucide-react";
 
 
 type TrainerPerfState = {
@@ -58,6 +69,12 @@ type IssueForm = {
   memo: string;
 };
 
+// 홍보 건수·수량·비용 입력값 파싱 — 0 이상의 정수만 허용한다.
+function parseCount(raw: string): number {
+  const n = parseInt(raw, 10);
+  return isNaN(n) || n < 0 ? 0 : n;
+}
+
 const defaultIssue = (type: "claim" | "staff" | "facility"): IssueForm => ({
   type,
   hasIssue: false,
@@ -76,8 +93,6 @@ export default function NewReportPage() {
   const [selectedBranchId, setSelectedBranchId] = useState("");
   const [existing, setExisting] = useState<DailyReport | null>(null);
   const [yesterday, setYesterday] = useState<DailyReport | null>(null);
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [campaignResults, setCampaignResults] = useState<Record<string, Record<string, number | null>>>({});
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [submitOpen, setSubmitOpen] = useState(false);
@@ -96,7 +111,6 @@ export default function NewReportPage() {
   const allowedYesterdayDate = getKoreaYesterday();
   const reportDate = searchParams?.get("date") ?? todayDate;
   const ymd = format(subDays(new Date(reportDate), 1), "yyyy-MM-dd");
-  const reportId = selectedBranchId ? getReportId(selectedBranchId, reportDate) : "";
   const datePermission = canManageReportDate("branch_manager", reportDate);
   const isDateAllowed = datePermission === "ok";
 
@@ -121,19 +135,27 @@ export default function NewReportPage() {
   const [utSms, setUtSms] = useState(0);
   const [utKakao, setUtKakao] = useState(0);
   const [utOther, setUtOther] = useState(0);
-  // Step 2 — offlinePromotion per-channel
-  const [opFlyer, setOpFlyer] = useState(0);
-  const [opPlacard, setOpPlacard] = useState(0);
-  const [opBanner, setOpBanner] = useState(0);
-  const [opPartnership, setOpPartnership] = useState(0);
-  const [opEvent, setOpEvent] = useState(0);
-  const [opOther, setOpOther] = useState(0);
-  const [promotionMemo, setPromotionMemo] = useState("");
+  // Step 4 — 프로모션 관리
+  const [promotionId, setPromotionId] = useState("");
+  const [activePromotions, setActivePromotions] = useState<Promotion[]>([]);
+  const [onlineActivities, setOnlineActivities] = useState<OnlinePromotionActivity[]>([]);
+  const [offlineActivities, setOfflineActivities] = useState<OfflinePromotionActivity[]>([]);
+  const [promotionInquiryCount, setPromotionInquiryCount] = useState<number | null>(null);
+  const [promotionVisitCount, setPromotionVisitCount] = useState<number | null>(null);
+  const [promotionRegistrationCount, setPromotionRegistrationCount] = useState<number | null>(null);
+  const [promotionSalesAmount, setPromotionSalesAmount] = useState<number | null>(null);
+  const [promotionNote, setPromotionNote] = useState("");
+  const [promotionEvidenceLinks, setPromotionEvidenceLinks] = useState("");
+  const [promotionEvidenceMemo, setPromotionEvidenceMemo] = useState("");
+  const [hasNoPromotionActivity, setHasNoPromotionActivity] = useState(false);
 
   // Computed totals (derived — not stored as state)
   const expiringTmTotal = etPhone + etSms + etKakao + etOther;
   const unregisteredTmTotal = utPhone + utSms + utKakao + utOther;
-  const offlinePromotionTotal = opFlyer + opPlacard + opBanner + opPartnership + opEvent + opOther;
+  // 홍보비 합계는 항상 활동 행에서 계산한다 — 사용자가 직접 수정할 수 없다.
+  const onlinePromotionCost = onlineActivities.reduce((sum, a) => sum + sanitizeAmount(a.cost), 0);
+  const offlinePromotionCost = offlineActivities.reduce((sum, a) => sum + sanitizeAmount(a.cost), 0);
+  const totalPromotionCost = onlinePromotionCost + offlinePromotionCost;
 
   // Step 3 issues
   const [issues, setIssues] = useState<IssueForm[]>([
@@ -155,11 +177,19 @@ export default function NewReportPage() {
     setExistingHappyCalls(null);
     setEtPhone(0); setEtSms(0); setEtKakao(0); setEtOther(0);
     setUtPhone(0); setUtSms(0); setUtKakao(0); setUtOther(0);
-    setOpFlyer(0); setOpPlacard(0); setOpBanner(0); setOpPartnership(0); setOpEvent(0); setOpOther(0);
-    setPromotionMemo("");
+    setPromotionId("");
+    setOnlineActivities([]);
+    setOfflineActivities([]);
+    setPromotionInquiryCount(null);
+    setPromotionVisitCount(null);
+    setPromotionRegistrationCount(null);
+    setPromotionSalesAmount(null);
+    setPromotionNote("");
+    setPromotionEvidenceLinks("");
+    setPromotionEvidenceMemo("");
+    setHasNoPromotionActivity(false);
     setActualWriterName("");
     setIssues([defaultIssue("claim"), defaultIssue("staff"), defaultIssue("facility")]);
-    setCampaignResults({});
     setLastSaved(null);
   }, []);
 
@@ -187,16 +217,28 @@ export default function NewReportPage() {
     } else {
       setUtPhone(0); setUtSms(0); setUtKakao(0); setUtOther(0);
     }
-    if (report.offlinePromotion) {
-      setOpFlyer(report.offlinePromotion.flyer); setOpPlacard(report.offlinePromotion.placard);
-      setOpBanner(report.offlinePromotion.banner); setOpPartnership(report.offlinePromotion.partnership);
-      setOpEvent(report.offlinePromotion.event); setOpOther(report.offlinePromotion.other);
-    } else {
-      setOpFlyer(0); setOpPlacard(0); setOpBanner(0); setOpPartnership(0); setOpEvent(0); setOpOther(0);
-    }
-    setPromotionMemo(report.promotionMemo ?? "");
+    // 4단계 프로모션 관리 — 기존 저장값을 그대로 불러온다.
+    setPromotionId(report.promotionId ?? "");
+    setOnlineActivities(report.onlinePromotionActivities ?? []);
+    setOfflineActivities(report.offlinePromotionActivities ?? []);
+    setPromotionInquiryCount(report.promotionInquiryCount ?? null);
+    setPromotionVisitCount(report.promotionVisitCount ?? null);
+    setPromotionRegistrationCount(report.promotionRegistrationCount ?? null);
+    setPromotionSalesAmount(report.promotionSalesAmount ?? null);
+    setPromotionNote(report.promotionNote ?? "");
+    setPromotionEvidenceLinks(report.promotionEvidenceLinks ?? "");
+    setPromotionEvidenceMemo(report.promotionEvidenceMemo ?? "");
+    setHasNoPromotionActivity(report.hasNoPromotionActivity === true);
     setActualWriterName(report.actualWriterName ?? "");
   }, []);
+
+  function updateOnlineActivity(index: number, patch: Partial<OnlinePromotionActivity>) {
+    setOnlineActivities((prev) => prev.map((a, i) => (i === index ? { ...a, ...patch } : a)));
+  }
+
+  function updateOfflineActivity(index: number, patch: Partial<OfflinePromotionActivity>) {
+    setOfflineActivities((prev) => prev.map((a, i) => (i === index ? { ...a, ...patch } : a)));
+  }
 
   function updateTrainerPerf(trainerId: string, patch: Partial<TrainerPerfState>) {
     setTrainerPerfs((prev) =>
@@ -266,10 +308,10 @@ export default function NewReportPage() {
 
     async function loadReportContext() {
       try {
-        const [ex, yd, cps, allTrainers, existingSessions] = await Promise.all([
+        const [ex, yd, promos, allTrainers, existingSessions] = await Promise.all([
           getReport(selectedBranchId, reportDate),
           getReport(selectedBranchId, ymd),
-          getActiveCampaigns(selectedBranchId),
+          getActivePromotionsForDate(selectedBranchId, reportDate),
           getAllTrainers(),
           getTrainerSessionsByBranchAndDate(selectedBranchId, reportDate),
         ]);
@@ -302,8 +344,7 @@ export default function NewReportPage() {
         );
 
         setYesterday(yd);
-        setCampaigns(cps);
-        if (cps.length === 0) setCampaignResults({});
+        setActivePromotions(promos);
         setLastSaved(null);
         if (ex) {
           applyReport(ex);
@@ -322,52 +363,85 @@ export default function NewReportPage() {
     return () => { cancelled = true; };
   }, [selectedBranchId, reportDate, ymd, applyIssues, applyReport, resetReportForm]);
 
-  // Load campaign results
-  useEffect(() => {
-    if (!reportId) return;
-    if (campaigns.length === 0) return;
-    let cancelled = false;
-    const rMap: Record<string, Record<string, number | null>> = {};
-    Promise.all(
-      campaigns.map(async (c) => {
-        const res = await getCampaignResultByReport(c.id, reportId);
-        rMap[c.id] = res?.metrics ?? {};
-      })
-    ).then(() => {
-      if (!cancelled) setCampaignResults(rMap);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [reportId, campaigns]);
+  const selectedPromotion = activePromotions.find((p) => p.id === promotionId) ?? null;
 
-  const collectData = useCallback((): Partial<DailyReport> => ({
-    activeMembers,
-    inquiries,
-    ptConsultations,
-    ptRegistrations,
-    reRegistrations,
-    comebackMembers,
-    happyCalls,
-    newHappyCalls,
-    existingHappyCalls,
-    expiringTm: { phone: etPhone, sms: etSms, kakao: etKakao, other: etOther },
-    expiringTmTotal: etPhone + etSms + etKakao + etOther,
-    unregisteredTm: { phone: utPhone, sms: utSms, kakao: utKakao, other: utOther },
-    unregisteredTmTotal: utPhone + utSms + utKakao + utOther,
-    offlinePromotion: { flyer: opFlyer, placard: opPlacard, banner: opBanner, partnership: opPartnership, event: opEvent, other: opOther },
-    offlinePromotionTotal: opFlyer + opPlacard + opBanner + opPartnership + opEvent + opOther,
-    ...(promotionMemo ? { promotionMemo } : {}),
-    ...(actualWriterName.trim() ? { actualWriterName: actualWriterName.trim() } : {}),
-  }), [activeMembers, inquiries, ptConsultations, ptRegistrations, reRegistrations, comebackMembers, happyCalls, newHappyCalls, existingHappyCalls, etPhone, etSms, etKakao, etOther, utPhone, utSms, utKakao, utOther, opFlyer, opPlacard, opBanner, opPartnership, opEvent, opOther, promotionMemo, actualWriterName]);
+  // 저장 시 legacy 오프라인 홍보 필드(offlinePromotion / offlinePromotionTotal /
+  // promotionMemo)는 포함하지 않는다 → updateDoc이 건드리지 않으므로 기존 값이 그대로 보존된다.
+  const collectData = useCallback((): Partial<DailyReport> => {
+    const cleanOnline = onlineActivities
+      .filter((a) => a.channel)
+      .map((a) => ({
+        channel: a.channel,
+        count: sanitizeAmount(a.count),
+        cost: sanitizeAmount(a.cost),
+        ...(a.link?.trim() ? { link: a.link.trim() } : {}),
+        ...(a.memo?.trim() ? { memo: a.memo.trim() } : {}),
+      }));
+    const cleanOffline = offlineActivities
+      .filter((a) => a.type)
+      .map((a) => ({
+        type: a.type,
+        quantity: sanitizeAmount(a.quantity),
+        cost: sanitizeAmount(a.cost),
+        ...(a.location?.trim() ? { location: a.location.trim() } : {}),
+        ...(a.memo?.trim() ? { memo: a.memo.trim() } : {}),
+      }));
+    const onlineCost = cleanOnline.reduce((s, a) => s + a.cost, 0);
+    const offlineCost = cleanOffline.reduce((s, a) => s + a.cost, 0);
+
+    return {
+      activeMembers,
+      inquiries,
+      ptConsultations,
+      ptRegistrations,
+      reRegistrations,
+      comebackMembers,
+      happyCalls,
+      newHappyCalls,
+      existingHappyCalls,
+      expiringTm: { phone: etPhone, sms: etSms, kakao: etKakao, other: etOther },
+      expiringTmTotal: etPhone + etSms + etKakao + etOther,
+      unregisteredTm: { phone: utPhone, sms: utSms, kakao: utKakao, other: utOther },
+      unregisteredTmTotal: utPhone + utSms + utKakao + utOther,
+
+      // 4단계 프로모션 관리 — 같은 날짜 보고서를 다시 저장하면 배열 전체가 교체되므로
+      // 중복 누적이 발생하지 않는다.
+      promotionId: promotionId || "",
+      promotionName: selectedPromotion?.name ?? "",
+      onlinePromotionActivities: cleanOnline,
+      offlinePromotionActivities: cleanOffline,
+      onlinePromotionCost: onlineCost,
+      offlinePromotionCost: offlineCost,
+      totalPromotionCost: onlineCost + offlineCost,
+      promotionInquiryCount: promotionInquiryCount,
+      promotionVisitCount: promotionVisitCount,
+      promotionRegistrationCount: promotionRegistrationCount,
+      promotionSalesAmount: promotionSalesAmount,
+      promotionNote: promotionNote.trim(),
+      promotionEvidenceLinks: promotionEvidenceLinks.trim(),
+      promotionEvidenceMemo: promotionEvidenceMemo.trim(),
+      hasNoPromotionActivity,
+
+      ...(actualWriterName.trim() ? { actualWriterName: actualWriterName.trim() } : {}),
+    };
+  }, [activeMembers, inquiries, ptConsultations, ptRegistrations, reRegistrations, comebackMembers, happyCalls, newHappyCalls, existingHappyCalls, etPhone, etSms, etKakao, etOther, utPhone, utSms, utKakao, utOther, promotionId, selectedPromotion, onlineActivities, offlineActivities, promotionInquiryCount, promotionVisitCount, promotionRegistrationCount, promotionSalesAmount, promotionNote, promotionEvidenceLinks, promotionEvidenceMemo, hasNoPromotionActivity, actualWriterName]);
 
   const hasAnyReportInput = useCallback(() => {
     return [activeMembers, inquiries, ptConsultations, ptRegistrations, reRegistrations, comebackMembers, happyCalls, newHappyCalls, existingHappyCalls]
       .some((v) => v !== null) ||
-      [etPhone, etSms, etKakao, etOther, utPhone, utSms, utKakao, utOther, opFlyer, opPlacard, opBanner, opPartnership, opEvent, opOther]
+      [etPhone, etSms, etKakao, etOther, utPhone, utSms, utKakao, utOther]
       .some((v) => v > 0) ||
-      promotionMemo.trim().length > 0;
-  }, [activeMembers, inquiries, ptConsultations, ptRegistrations, reRegistrations, comebackMembers, happyCalls, newHappyCalls, existingHappyCalls, etPhone, etSms, etKakao, etOther, utPhone, utSms, utKakao, utOther, opFlyer, opPlacard, opBanner, opPartnership, opEvent, opOther, promotionMemo]);
+      // 프로모션 관리 입력 — "활동 없음" 체크도 사용자가 의도적으로 남긴 입력으로 취급한다.
+      promotionId !== "" ||
+      onlineActivities.length > 0 ||
+      offlineActivities.length > 0 ||
+      [promotionInquiryCount, promotionVisitCount, promotionRegistrationCount, promotionSalesAmount]
+      .some((v) => v !== null) ||
+      hasNoPromotionActivity ||
+      promotionNote.trim().length > 0 ||
+      promotionEvidenceLinks.trim().length > 0 ||
+      promotionEvidenceMemo.trim().length > 0;
+  }, [activeMembers, inquiries, ptConsultations, ptRegistrations, reRegistrations, comebackMembers, happyCalls, newHappyCalls, existingHappyCalls, etPhone, etSms, etKakao, etOther, utPhone, utSms, utKakao, utOther, promotionId, onlineActivities, offlineActivities, promotionInquiryCount, promotionVisitCount, promotionRegistrationCount, promotionSalesAmount, hasNoPromotionActivity, promotionNote, promotionEvidenceLinks, promotionEvidenceMemo]);
 
   const autoSave = useCallback(async () => {
     if (!selectedBranchId || !user) return;
@@ -393,7 +467,7 @@ export default function NewReportPage() {
   }, [autoSave]);
 
   // Debounce on field changes
-  useEffect(() => { triggerDebounce(); }, [activeMembers, inquiries, ptConsultations, ptRegistrations, reRegistrations, comebackMembers, happyCalls, newHappyCalls, existingHappyCalls, etPhone, etSms, etKakao, etOther, utPhone, utSms, utKakao, utOther, opFlyer, opPlacard, opBanner, opPartnership, opEvent, opOther, promotionMemo, triggerDebounce]);
+  useEffect(() => { triggerDebounce(); }, [activeMembers, inquiries, ptConsultations, ptRegistrations, reRegistrations, comebackMembers, happyCalls, newHappyCalls, existingHappyCalls, etPhone, etSms, etKakao, etOther, utPhone, utSms, utKakao, utOther, promotionId, onlineActivities, offlineActivities, promotionInquiryCount, promotionVisitCount, promotionRegistrationCount, promotionSalesAmount, hasNoPromotionActivity, promotionNote, promotionEvidenceLinks, promotionEvidenceMemo, triggerDebounce]);
 
   async function handleSubmit() {
     setSubmitError("");
@@ -449,13 +523,8 @@ export default function NewReportPage() {
         }));
       await upsertIssues(rid, selectedBranchId, reportDate, activeIssues);
 
-      // Save campaign results
-      for (const c of campaigns) {
-        const metrics = campaignResults[c.id] ?? {};
-        if (Object.keys(metrics).length > 0) {
-          await upsertCampaignResult(c.id, rid, selectedBranchId, reportDate, metrics);
-        }
-      }
+      // 프로모션 실적은 별도 컬렉션이 아니라 위 upsertReport로 일일보고 원본에 저장된다
+      // (branchId + reportDate 문서 1개) — 월 누적은 조회 시 합산하므로 이중 누적이 없다.
 
       // Save trainer sessions
       const trainerErrors: string[] = [];
@@ -568,6 +637,12 @@ export default function NewReportPage() {
   const canEditReport = existing ? (existing.status === "draft" || isRevisionRequired) : isDateAllowed;
   const isDataMissing = isAbnormalSubmittedReport(existing);
   const blockedNewReport = !existing && !isDateAllowed;
+
+  // 과거 2단계에서 입력된 오프라인 홍보 기록이 있으면 읽기 전용으로만 보여준다.
+  const legacyOfflinePromotion =
+    existing?.offlinePromotion && getOfflinePromoTotal(existing) > 0
+      ? existing.offlinePromotion
+      : null;
 
   function handleDateChange(nextDate: string) {
     setLoading(true);
@@ -737,10 +812,10 @@ export default function NewReportPage() {
         </div>
       )}
 
-      {/* Step 2: TM & Promotion */}
+      {/* Step 2: TM only (홍보는 4단계 프로모션 관리로 이동) */}
       {step === 2 && (
         <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-6">
-          <h2 className="font-semibold text-gray-800">2. TM·홍보 활동</h2>
+          <h2 className="font-semibold text-gray-800">2. TM 활동</h2>
 
           {/* Expiring TM */}
           <div className="space-y-3">
@@ -840,67 +915,34 @@ export default function NewReportPage() {
             오늘 TM 활동 없음 (전체 초기화)
           </button>
 
-          {/* Offline Promotion */}
-          <div className="space-y-3 pt-2 border-t border-gray-100">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium text-gray-700">3. 오프라인 홍보 활동</h3>
-              <button
-                type="button"
-                onClick={() => { setOpFlyer(0); setOpPlacard(0); setOpBanner(0); setOpPartnership(0); setOpEvent(0); setOpOther(0); }}
-                className="text-xs text-gray-400 hover:text-gray-600 underline"
-              >
-                초기화
-              </button>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              {([
-                { label: "전단지", val: opFlyer, set: setOpFlyer },
-                { label: "현수막", val: opPlacard, set: setOpPlacard },
-                { label: "배너", val: opBanner, set: setOpBanner },
-                { label: "제휴", val: opPartnership, set: setOpPartnership },
-                { label: "외부 행사", val: opEvent, set: setOpEvent },
-                { label: "기타", val: opOther, set: setOpOther },
-              ] as const).map(({ label, val, set }) => (
-                <div key={label} className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-gray-700">{label}</label>
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      value={val}
-                      onChange={(e) => { const n = parseInt(e.target.value, 10); set(isNaN(n) || n < 0 ? 0 : n); }}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
-                    />
-                    <span className="text-xs text-gray-500 whitespace-nowrap">개</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="bg-gray-50 rounded-lg px-3 py-2 flex items-center justify-between">
-              <span className="text-xs text-gray-500">홍보 총합</span>
-              <span className="text-base font-bold text-gray-800">{offlinePromotionTotal}개 <span className="text-xs font-normal text-gray-400">자동 계산</span></span>
-            </div>
+          <p className="text-xs text-gray-400 pt-2 border-t border-gray-100">
+            홍보 활동은 4단계 프로모션 관리에서 입력합니다.
+          </p>
 
-            <div>
-              <label className="text-xs font-medium text-gray-700 block mb-1">홍보 메모</label>
-              <textarea
-                value={promotionMemo}
-                onChange={(e) => setPromotionMemo(e.target.value)}
-                rows={2}
-                placeholder="홍보 활동 내용 메모"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"
-              />
+          {/* 기존 오프라인 홍보 기록 — 과거 보고서에만 표시하는 읽기 전용 영역.
+              신규 입력은 4단계에서만 하고, 여기 값은 수정·삭제하지 않는다. */}
+          {legacyOfflinePromotion && (
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-2">
+              <p className="text-sm font-medium text-gray-700">기존 오프라인 홍보 기록 (읽기 전용)</p>
+              <p className="text-xs text-gray-400">
+                이전 버전에서 2단계에 입력된 기록입니다. 수정은 되지 않으며 기록 보존용으로만 표시됩니다.
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs text-gray-600">
+                <span>전단지 <b className="text-gray-800">{legacyOfflinePromotion.flyer}</b>개</span>
+                <span>현수막 <b className="text-gray-800">{legacyOfflinePromotion.placard}</b>개</span>
+                <span>배너 <b className="text-gray-800">{legacyOfflinePromotion.banner}</b>개</span>
+                <span>제휴 <b className="text-gray-800">{legacyOfflinePromotion.partnership}</b>개</span>
+                <span>외부 행사 <b className="text-gray-800">{legacyOfflinePromotion.event}</b>개</span>
+                <span>기타 <b className="text-gray-800">{legacyOfflinePromotion.other}</b>개</span>
+              </div>
+              <p className="text-xs text-gray-500">
+                총합 <b className="text-gray-800">{getOfflinePromoTotal(existing ?? {})}</b>개
+              </p>
+              {existing?.promotionMemo && (
+                <p className="text-xs text-gray-500">기존 홍보 메모: {existing.promotionMemo}</p>
+              )}
             </div>
-
-            <button
-              type="button"
-              onClick={() => { setOpFlyer(0); setOpPlacard(0); setOpBanner(0); setOpPartnership(0); setOpEvent(0); setOpOther(0); }}
-              className="text-xs text-gray-400 hover:text-gray-600 underline"
-            >
-              오늘 오프라인 홍보 없음
-            </button>
-          </div>
+          )}
         </div>
       )}
 
@@ -1021,37 +1063,354 @@ export default function NewReportPage() {
         </div>
       )}
 
-      {/* Step 4: Campaigns */}
+      {/* Step 4: 프로모션 관리 */}
       {step === 4 && (
-        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-5">
-          <h2 className="font-semibold text-gray-800">4. 캠페인 실적</h2>
-          {campaigns.length === 0 ? (
-            <p className="text-sm text-gray-400 text-center py-8">현재 진행 중인 캠페인이 없습니다.</p>
-          ) : (
-            campaigns.map((c) => (
-              <div key={c.id} className="border border-gray-100 rounded-xl p-4 space-y-3">
-                <div>
-                  <p className="font-medium text-gray-800 text-sm">{c.name}</p>
-                  <p className="text-xs text-gray-400">기간: {formatDate(c.startDate)} ~ {formatDate(c.endDate)}</p>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  {c.metricDefinitions.map((metric) => (
-                    <NumberInput
-                      key={metric.key}
-                      label={metric.label}
-                      value={campaignResults[c.id]?.[metric.key] ?? null}
-                      onChange={(val) => {
-                        setCampaignResults((prev) => ({
-                          ...prev,
-                          [c.id]: { ...(prev[c.id] ?? {}), [metric.key]: val },
-                        }));
-                      }}
-                      unit="건"
-                    />
-                  ))}
-                </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-6">
+          <div>
+            <h2 className="font-semibold text-gray-800">4. 프로모션 관리</h2>
+            <p className="text-xs text-gray-500 mt-1">
+              {formatDate(reportDate)} · {selectedBranchName}
+            </p>
+          </div>
+
+          {/* 오늘 프로모션 활동 없음 — 미작성 상태와 구분하기 위한 명시적 체크 */}
+          <label className="flex items-start gap-2 rounded-lg bg-gray-50 px-3 py-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={hasNoPromotionActivity}
+              disabled={!canEditReport}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                setHasNoPromotionActivity(checked);
+                if (checked) {
+                  // 활동 없음: 홍보 행과 성과를 0으로 비운다 (메모는 선택사항으로 남긴다)
+                  setOnlineActivities([]);
+                  setOfflineActivities([]);
+                  setPromotionInquiryCount(0);
+                  setPromotionVisitCount(0);
+                  setPromotionRegistrationCount(0);
+                  setPromotionSalesAmount(0);
+                }
+              }}
+              className="mt-0.5"
+            />
+            <span className="text-xs text-gray-600">
+              오늘 프로모션 활동 없음
+              <span className="block text-gray-400">
+                선택하면 홍보 0건, 비용 0원, 성과 0으로 저장됩니다. 메모는 선택 입력입니다.
+              </span>
+            </span>
+          </label>
+
+          {/* 1. 당월 프로모션 선택 */}
+          <div className="space-y-2">
+            <h3 className="text-sm font-medium text-gray-700">1. 당월 프로모션 선택</h3>
+            <select
+              value={promotionId}
+              disabled={!canEditReport}
+              onChange={(e) => setPromotionId(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-50 disabled:text-gray-400"
+            >
+              <option value="">프로모션 없음</option>
+              {activePromotions.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({p.startDate} ~ {p.endDate})
+                </option>
+              ))}
+            </select>
+            {activePromotions.length === 0 ? (
+              <p className="text-xs text-gray-400">
+                보고일에 진행 중인 프로모션이 없습니다. 프로모션 없이 홍보 활동만 기록할 수 있습니다.
+              </p>
+            ) : selectedPromotion ? (
+              <div className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600 space-y-0.5">
+                {selectedPromotion.purpose && <p>목적: {selectedPromotion.purpose}</p>}
+                {selectedPromotion.targetAudience && <p>대상: {selectedPromotion.targetAudience}</p>}
+                {selectedPromotion.benefitDescription && <p>혜택: {selectedPromotion.benefitDescription}</p>}
+                <p className="text-gray-400">
+                  프로모션 내용은 프로모션 관리에 저장된 값이며 매일 다시 입력하지 않습니다.
+                </p>
               </div>
-            ))
+            ) : (
+              <p className="text-xs text-amber-600">
+                프로모션 없음 상태입니다. 성과는 특정 프로모션에 연결되지 않습니다.
+              </p>
+            )}
+          </div>
+
+          {/* 2. 오늘 온라인 홍보 */}
+          <div className="space-y-2 pt-2 border-t border-gray-100">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-gray-700">2. 오늘 온라인 홍보</h3>
+              <button
+                type="button"
+                disabled={!canEditReport || hasNoPromotionActivity}
+                onClick={() =>
+                  setOnlineActivities((prev) => [
+                    ...prev,
+                    { channel: ONLINE_PROMOTION_CHANNELS[0], count: 0, cost: 0, link: "", memo: "" },
+                  ])
+                }
+                className="flex items-center gap-1 px-2.5 py-1.5 text-xs border border-[#1e3a5f] text-[#1e3a5f] rounded-lg hover:bg-[#1e3a5f]/5 disabled:opacity-40"
+              >
+                <PlusIcon className="w-3.5 h-3.5" />
+                온라인 홍보 추가
+              </button>
+            </div>
+            {onlineActivities.length === 0 ? (
+              <p className="text-xs text-gray-400">실제 실행한 채널만 추가해주세요.</p>
+            ) : (
+              <div className="space-y-3">
+                {onlineActivities.map((a, idx) => (
+                  <div key={idx} className="border border-gray-100 rounded-xl p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={a.channel}
+                        disabled={!canEditReport}
+                        onChange={(e) => updateOnlineActivity(idx, { channel: e.target.value })}
+                        className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-red-500 disabled:bg-gray-50"
+                      >
+                        {ONLINE_PROMOTION_CHANNELS.map((c) => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        disabled={!canEditReport}
+                        onClick={() => setOnlineActivities((prev) => prev.filter((_, i) => i !== idx))}
+                        className="p-1.5 rounded text-gray-400 hover:text-red-500 hover:bg-gray-100 disabled:opacity-40"
+                        title="삭제"
+                      >
+                        <TrashIcon className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs font-medium text-gray-700">실행 건수</label>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min={0}
+                          value={a.count === 0 ? "" : a.count}
+                          placeholder="0"
+                          disabled={!canEditReport}
+                          onChange={(e) => updateOnlineActivity(idx, { count: parseCount(e.target.value) })}
+                          className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-red-500 disabled:bg-gray-50"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs font-medium text-gray-700">비용 (원)</label>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min={0}
+                          value={a.cost === 0 ? "" : a.cost}
+                          placeholder="0"
+                          disabled={!canEditReport}
+                          onChange={(e) => updateOnlineActivity(idx, { cost: parseCount(e.target.value) })}
+                          className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-red-500 disabled:bg-gray-50"
+                        />
+                      </div>
+                    </div>
+                    <input
+                      type="url"
+                      value={a.link ?? ""}
+                      placeholder="게시물·광고 링크 (선택)"
+                      disabled={!canEditReport}
+                      onChange={(e) => updateOnlineActivity(idx, { link: e.target.value })}
+                      className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-red-500 disabled:bg-gray-50"
+                    />
+                    <input
+                      type="text"
+                      value={a.memo ?? ""}
+                      placeholder="메모 (선택)"
+                      disabled={!canEditReport}
+                      onChange={(e) => updateOnlineActivity(idx, { memo: e.target.value })}
+                      className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-red-500 disabled:bg-gray-50"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* 3. 오늘 오프라인 홍보 */}
+          <div className="space-y-2 pt-2 border-t border-gray-100">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-gray-700">3. 오늘 오프라인 홍보</h3>
+              <button
+                type="button"
+                disabled={!canEditReport || hasNoPromotionActivity}
+                onClick={() =>
+                  setOfflineActivities((prev) => [
+                    ...prev,
+                    { type: OFFLINE_PROMOTION_TYPES[0], quantity: 0, location: "", cost: 0, memo: "" },
+                  ])
+                }
+                className="flex items-center gap-1 px-2.5 py-1.5 text-xs border border-[#1e3a5f] text-[#1e3a5f] rounded-lg hover:bg-[#1e3a5f]/5 disabled:opacity-40"
+              >
+                <PlusIcon className="w-3.5 h-3.5" />
+                오프라인 홍보 추가
+              </button>
+            </div>
+            {offlineActivities.length === 0 ? (
+              <p className="text-xs text-gray-400">실제 진행한 홍보만 추가해주세요.</p>
+            ) : (
+              <div className="space-y-3">
+                {offlineActivities.map((a, idx) => (
+                  <div key={idx} className="border border-gray-100 rounded-xl p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={a.type}
+                        disabled={!canEditReport}
+                        onChange={(e) => updateOfflineActivity(idx, { type: e.target.value })}
+                        className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-red-500 disabled:bg-gray-50"
+                      >
+                        {OFFLINE_PROMOTION_TYPES.map((t) => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        disabled={!canEditReport}
+                        onClick={() => setOfflineActivities((prev) => prev.filter((_, i) => i !== idx))}
+                        className="p-1.5 rounded text-gray-400 hover:text-red-500 hover:bg-gray-100 disabled:opacity-40"
+                        title="삭제"
+                      >
+                        <TrashIcon className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs font-medium text-gray-700">수량</label>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min={0}
+                          value={a.quantity === 0 ? "" : a.quantity}
+                          placeholder="0"
+                          disabled={!canEditReport}
+                          onChange={(e) => updateOfflineActivity(idx, { quantity: parseCount(e.target.value) })}
+                          className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-red-500 disabled:bg-gray-50"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs font-medium text-gray-700">비용 (원)</label>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min={0}
+                          value={a.cost === 0 ? "" : a.cost}
+                          placeholder="0"
+                          disabled={!canEditReport}
+                          onChange={(e) => updateOfflineActivity(idx, { cost: parseCount(e.target.value) })}
+                          className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-red-500 disabled:bg-gray-50"
+                        />
+                      </div>
+                    </div>
+                    <input
+                      type="text"
+                      value={a.location ?? ""}
+                      placeholder="위치 (선택)"
+                      disabled={!canEditReport}
+                      onChange={(e) => updateOfflineActivity(idx, { location: e.target.value })}
+                      className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-red-500 disabled:bg-gray-50"
+                    />
+                    <input
+                      type="text"
+                      value={a.memo ?? ""}
+                      placeholder="메모 (선택)"
+                      disabled={!canEditReport}
+                      onChange={(e) => updateOfflineActivity(idx, { memo: e.target.value })}
+                      className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-red-500 disabled:bg-gray-50"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* 4. 오늘 홍보비 — 자동 합계, 직접 수정 불가 */}
+          <div className="space-y-2 pt-2 border-t border-gray-100">
+            <h3 className="text-sm font-medium text-gray-700">4. 오늘 홍보비</h3>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-gray-50 rounded-lg px-3 py-2">
+                <p className="text-xs text-gray-500">온라인 비용</p>
+                <p className="text-base font-bold text-gray-800">{formatNumber(onlinePromotionCost)}원</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg px-3 py-2">
+                <p className="text-xs text-gray-500">오프라인 비용</p>
+                <p className="text-base font-bold text-gray-800">{formatNumber(offlinePromotionCost)}원</p>
+              </div>
+            </div>
+            <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 flex items-center justify-between">
+              <span className="text-xs text-blue-700 font-medium">오늘 총 홍보비</span>
+              <span className="text-base font-bold text-blue-800">
+                {formatNumber(totalPromotionCost)}원
+                <span className="ml-1 text-xs font-normal text-blue-500">자동 계산</span>
+              </span>
+            </div>
+          </div>
+
+          {/* 5. 오늘 프로모션 성과 */}
+          <div className="space-y-2 pt-2 border-t border-gray-100">
+            <h3 className="text-sm font-medium text-gray-700">5. 오늘 프로모션 성과</h3>
+            {!selectedPromotion && (
+              <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
+                프로모션 없음 상태로 입력됩니다.
+              </p>
+            )}
+            <div className="grid grid-cols-2 gap-3">
+              <NumberInput label="프로모션 문의 수" value={promotionInquiryCount} onChange={setPromotionInquiryCount} unit="건" />
+              <NumberInput label="프로모션 방문 수" value={promotionVisitCount} onChange={setPromotionVisitCount} unit="건" />
+              <NumberInput label="프로모션 등록 수" value={promotionRegistrationCount} onChange={setPromotionRegistrationCount} unit="건" />
+              <NumberInput label="프로모션 매출" value={promotionSalesAmount} onChange={setPromotionSalesAmount} unit="원" />
+            </div>
+          </div>
+
+          {/* 6. 프로모션 메모·증빙 */}
+          <div className="space-y-3 pt-2 border-t border-gray-100">
+            <h3 className="text-sm font-medium text-gray-700">6. 프로모션 메모·증빙</h3>
+            <div>
+              <label className="text-xs font-medium text-gray-700 block mb-1">프로모션 메모</label>
+              <textarea
+                value={promotionNote}
+                rows={2}
+                placeholder="오늘 프로모션 진행 내용 메모"
+                disabled={!canEditReport}
+                onChange={(e) => setPromotionNote(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 resize-none disabled:bg-gray-50"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-700 block mb-1">게시물·광고 링크</label>
+              <textarea
+                value={promotionEvidenceLinks}
+                rows={2}
+                placeholder="링크를 한 줄에 하나씩 입력"
+                disabled={!canEditReport}
+                onChange={(e) => setPromotionEvidenceLinks(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 resize-none disabled:bg-gray-50"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-700 block mb-1">증빙 메모</label>
+              <textarea
+                value={promotionEvidenceMemo}
+                rows={2}
+                placeholder="영수증·증빙 관련 메모 (사진 업로드는 후속 작업)"
+                disabled={!canEditReport}
+                onChange={(e) => setPromotionEvidenceMemo(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 resize-none disabled:bg-gray-50"
+              />
+            </div>
+          </div>
+
+          {/* 기존 캠페인 기록 — 과거 보고서 보존용 읽기 전용 안내 */}
+          {existing?.promotionMemo && (
+            <p className="text-xs text-gray-400 pt-2 border-t border-gray-100">
+              이 보고서에는 이전 버전의 홍보 메모가 남아 있습니다. 2단계에서 읽기 전용으로 확인할 수 있습니다.
+            </p>
           )}
         </div>
       )}

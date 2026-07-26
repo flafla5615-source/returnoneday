@@ -40,6 +40,9 @@ export interface TmBreakdown {
   other: number;
 }
 
+// Deprecated — 일일보고 2단계에서 입력하던 과거 오프라인 홍보 집계 구조.
+// 신규 입력은 4단계 프로모션 관리(offlinePromotionActivities)로 대체되었으나,
+// 기존 보고서 문서를 보존·조회하기 위해 타입은 그대로 유지한다.
 export interface OfflinePromotionBreakdown {
   flyer: number;
   placard: number;
@@ -48,6 +51,93 @@ export interface OfflinePromotionBreakdown {
   event: number;
   other: number;
 }
+
+// ─── Promotion (프로모션 관리) ────────────────────────────────────────────────
+// 지점별·월별 프로모션 기본정보. 일일 실적은 이 문서가 아니라 dailyReports에 저장하고,
+// 월간 수치는 dailyReports를 reportDate 기준으로 조회해 합산한다(이중 누적 방지).
+
+export type PromotionStatus = "preparing" | "active" | "ended" | "stopped";
+
+export const PROMOTION_STATUS_LABEL: Record<PromotionStatus, string> = {
+  preparing: "준비 중",
+  active: "진행 중",
+  ended: "종료",
+  stopped: "중단",
+};
+
+export interface Promotion {
+  id: string;
+  branchId: string;
+  yearMonth: string; // YYYY-MM
+  name: string;
+  startDate: string; // YYYY-MM-DD
+  endDate: string; // YYYY-MM-DD
+  purpose?: string;
+  targetAudience?: string;
+  benefitDescription?: string;
+  productDescription?: string;
+  targetInquiryCount?: number | null;
+  targetRegistrationCount?: number | null;
+  targetSalesAmount?: number | null;
+  plannedOnlineBudget?: number | null;
+  plannedOfflineBudget?: number | null;
+  plannedTotalBudget?: number | null; // 온라인 + 오프라인 계획 예산 자동 계산
+  status: PromotionStatus;
+  createdBy: string;
+  createdAt: Timestamp;
+  updatedBy?: string;
+  updatedAt: Timestamp;
+}
+
+// 일일보고 4단계에 기록하는 그날의 온라인 홍보 실행 내역 (행 단위, 같은 채널 중복 허용)
+export interface OnlinePromotionActivity {
+  channel: string;
+  count: number;
+  cost: number;
+  link?: string;
+  memo?: string;
+}
+
+// 일일보고 4단계에 기록하는 그날의 오프라인 홍보 실행 내역 (행 단위)
+export interface OfflinePromotionActivity {
+  type: string;
+  quantity: number;
+  location?: string;
+  cost: number;
+  memo?: string;
+}
+
+export const ONLINE_PROMOTION_CHANNELS = [
+  "네이버 플레이스 소식",
+  "네이버 블로그",
+  "네이버 검색광고",
+  "인스타 피드",
+  "인스타 릴스",
+  "인스타 스토리",
+  "메타 광고",
+  "당근 게시물",
+  "당근 광고",
+  "문자 발송",
+  "카카오톡 채널",
+  "체험단",
+  "인플루언서",
+  "지역 커뮤니티",
+  "기타",
+] as const;
+
+export const OFFLINE_PROMOTION_TYPES = [
+  "전단지",
+  "현수막",
+  "X배너",
+  "입간판",
+  "센터 내부 포스터",
+  "아파트 게시판",
+  "엘리베이터 광고",
+  "제휴처 홍보",
+  "외부 행사",
+  "거리 홍보",
+  "기타",
+] as const;
 
 // ─── Daily Report ────────────────────────────────────────────────────────────
 
@@ -71,11 +161,15 @@ export interface DailyReport {
   newHappyCalls: number | null;
   existingHappyCalls: number | null;
 
-  // Step 2 - TM & Promotion (new per-channel structure)
+  // Step 2 - TM (per-channel structure)
   expiringTm?: TmBreakdown;
   expiringTmTotal?: number;
   unregisteredTm?: TmBreakdown;
   unregisteredTmTotal?: number;
+
+  // Deprecated — 과거 2단계 "오프라인 홍보 활동" 입력값.
+  // 신규 작성 화면에서는 더 이상 입력하지 않지만, 기존 보고서 조회를 위해 보존한다.
+  // 절대 삭제하거나 신규 프로모션 필드로 자동 이전하지 않는다.
   offlinePromotion?: OfflinePromotionBreakdown;
   offlinePromotionTotal?: number;
   promotionMemo?: string;
@@ -87,6 +181,23 @@ export interface DailyReport {
   unregisteredTmMethods?: string[];
   offlinePromotionCount?: number | null;
   offlinePromotionMethods?: string[];
+
+  // Step 4 - 프로모션 관리 (신규). 위 legacy 홍보 필드와 이름이 겹치지 않게 분리했다.
+  promotionId?: string;
+  promotionName?: string;
+  onlinePromotionActivities?: OnlinePromotionActivity[];
+  offlinePromotionActivities?: OfflinePromotionActivity[];
+  onlinePromotionCost?: number;      // onlinePromotionActivities cost 합계 (자동 계산)
+  offlinePromotionCost?: number;     // offlinePromotionActivities cost 합계 (자동 계산)
+  totalPromotionCost?: number;       // onlinePromotionCost + offlinePromotionCost (자동 계산)
+  promotionInquiryCount?: number | null;
+  promotionVisitCount?: number | null;
+  promotionRegistrationCount?: number | null;
+  promotionSalesAmount?: number | null;
+  promotionNote?: string;            // 프로모션 메모
+  promotionEvidenceLinks?: string;   // 게시물·광고 링크 (줄바꿈 구분)
+  promotionEvidenceMemo?: string;    // 증빙 메모
+  hasNoPromotionActivity?: boolean;  // "오늘 프로모션 활동 없음" — 미작성 상태와 구분
 
   // 실제 입력자 추적 — 운영계정이 지점명 기준이라 개인 식별용으로 선택 입력
   actualWriterName?: string;
@@ -124,7 +235,9 @@ export interface Issue {
   updatedAt: Timestamp;
 }
 
-// ─── Campaign ─────────────────────────────────────────────────────────────────
+// ─── Campaign (deprecated — Promotion으로 대체됨) ──────────────────────────────
+// 신규 등록·입력에는 사용하지 않는다. 과거 보고서의 "기존 캠페인 기록"을
+// 읽기 전용으로 조회하기 위해서만 유지한다.
 
 export type CampaignStatus = "draft" | "active" | "ended";
 

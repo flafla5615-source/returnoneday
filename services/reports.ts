@@ -96,8 +96,8 @@ export async function upsertReport(
       expiringTmTotal: 0,
       unregisteredTm: { phone: 0, sms: 0, kakao: 0, other: 0 },
       unregisteredTmTotal: 0,
-      offlinePromotion: { flyer: 0, placard: 0, banner: 0, partnership: 0, event: 0, other: 0 },
-      offlinePromotionTotal: 0,
+      // legacy offlinePromotion/offlinePromotionTotal은 신규 문서에 만들지 않는다.
+      // 홍보는 4단계 프로모션 관리(onlinePromotionActivities/offlinePromotionActivities)에 저장한다.
       ...cleanData,
       isTestData: false,
       source: "manager-input",

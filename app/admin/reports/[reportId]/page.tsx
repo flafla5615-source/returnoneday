@@ -7,14 +7,15 @@ import { useAuth } from "@/contexts/AuthContext";
 import { getReportById, updateReportStatus, moveReportDate, type MoveReportDateResult } from "@/services/reports";
 import { getIssuesByReport } from "@/services/issues";
 import { getBranchesByIds } from "@/services/branches";
+import { getAllCampaigns, getCampaignResultsByReportId } from "@/services/campaigns";
 import { ReportStatusBadge, SeverityBadge, IssueStatusBadge } from "@/components/common/StatusBadge";
 import PrintButton from "@/components/print/PrintButton";
 import PrintHeader from "@/components/print/PrintHeader";
 import PrintableSection from "@/components/print/PrintableSection";
 import LoadingState from "@/components/common/LoadingState";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
-import { formatDate, formatDateTime, calcPtConversionRate, formatPercent, getExpiringTmTotal, getUnregisteredTmTotal, getOfflinePromoTotal, isAbnormalSubmittedReport, canManageReportDate, getKoreaToday } from "@/lib/utils";
-import type { DailyReport, Issue, ReportStatus } from "@/types";
+import { formatDate, formatDateTime, calcPtConversionRate, formatPercent, getExpiringTmTotal, getUnregisteredTmTotal, getOfflinePromoTotal, isAbnormalSubmittedReport, canManageReportDate, getKoreaToday, formatNumber } from "@/lib/utils";
+import type { CampaignResult, DailyReport, Issue, ReportStatus } from "@/types";
 import { ChevronLeftIcon, CalendarClockIcon, XIcon, AlertTriangleIcon } from "lucide-react";
 
 function Row({ label, value }: { label: string; value: string | number }) {
@@ -41,6 +42,10 @@ export default function AdminReportDetailPage() {
   const [showRevisionModal, setShowRevisionModal] = useState(false);
   const [printSections, setPrintSections] = useState<string[]>(["report"]);
 
+  // 과거 캠페인 기록 (읽기 전용)
+  const [legacyCampaignResults, setLegacyCampaignResults] = useState<CampaignResult[]>([]);
+  const [legacyCampaignNames, setLegacyCampaignNames] = useState<Record<string, string>>({});
+
   // 보고일 변경
   const [moveOpen, setMoveOpen] = useState(false);
   const [moveDate, setMoveDate] = useState("");
@@ -60,6 +65,16 @@ export default function AdminReportDetailPage() {
         getBranchesByIds([r.branchId]).then((bs) => setBranchName(bs[0]?.name ?? r.branchId));
       }
     });
+    // 과거 캠페인 실적은 있을 때만 표시한다 — 없으면 조용히 넘어간다.
+    getCampaignResultsByReportId(reportId)
+      .then(async (results) => {
+        setLegacyCampaignResults(results);
+        if (results.length > 0) {
+          const campaigns = await getAllCampaigns();
+          setLegacyCampaignNames(Object.fromEntries(campaigns.map((c) => [c.id, c.name])));
+        }
+      })
+      .catch((err) => console.error("[AdminReportDetail] legacy campaign load failed", err));
   }, [reportId]);
 
   async function handleAction(newStatus: ReportStatus, adminComment?: string) {
@@ -149,6 +164,11 @@ export default function AdminReportDetailPage() {
 
   const convRate = calcPtConversionRate(report.ptConsultations, report.ptRegistrations);
   const isAbnormalSubmitted = isAbnormalSubmittedReport(report);
+  // 과거 2단계 오프라인 홍보 값이 실제로 있을 때만 레거시 영역을 보여준다.
+  const hasLegacyOfflinePromotion =
+    getOfflinePromoTotal(report) > 0 ||
+    (report.offlinePromotionCount ?? 0) > 0 ||
+    !!report.promotionMemo;
   const canRequestRevision = report.status === "submitted";
   const canLock = report.status === "submitted" || report.status === "revision_required";
   const canUnlock = report.status === "locked";
@@ -216,7 +236,7 @@ export default function AdminReportDetailPage() {
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-        <h2 className="text-sm font-semibold text-gray-800 mb-3">TM·홍보</h2>
+        <h2 className="text-sm font-semibold text-gray-800 mb-3">TM 활동</h2>
         {report.expiringTm ? (
           <>
             <p className="text-xs font-medium text-gray-500 mb-1">만료·홀드 TM</p>
@@ -245,24 +265,145 @@ export default function AdminReportDetailPage() {
         ) : (
           <Row label="미등록 TM" value={`${report.unregisteredTmCount ?? "-"}건`} />
         )}
-        {report.offlinePromotion ? (
-          <>
-            <p className="text-xs font-medium text-gray-500 mt-3 mb-1">오프라인 홍보</p>
-            <div className="grid grid-cols-2 gap-x-4 pl-2 mb-2">
-              <Row label="전단지" value={`${report.offlinePromotion.flyer}개`} />
-              <Row label="현수막" value={`${report.offlinePromotion.placard}개`} />
-              <Row label="배너" value={`${report.offlinePromotion.banner}개`} />
-              <Row label="제휴" value={`${report.offlinePromotion.partnership}개`} />
-              <Row label="외부 행사" value={`${report.offlinePromotion.event}개`} />
-              <Row label="기타" value={`${report.offlinePromotion.other}개`} />
-            </div>
-            <Row label="홍보 합계" value={`${getOfflinePromoTotal(report)}개`} />
-          </>
-        ) : (
-          <Row label="오프라인 홍보" value={`${report.offlinePromotionCount ?? "-"}개`} />
-        )}
-        {report.promotionMemo && <Row label="홍보 메모" value={report.promotionMemo} />}
       </div>
+
+      {/* 프로모션 관리 (4단계) */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+        <h2 className="text-sm font-semibold text-gray-800 mb-3">프로모션 관리</h2>
+
+        {report.hasNoPromotionActivity ? (
+          <p className="text-sm text-gray-500">이 날은 프로모션 활동 없음으로 보고되었습니다.</p>
+        ) : null}
+
+        <Row label="선택한 프로모션" value={report.promotionName || "프로모션 없음"} />
+
+        <p className="text-xs font-medium text-gray-500 mt-3 mb-1">온라인 활동</p>
+        {(report.onlinePromotionActivities ?? []).length === 0 ? (
+          <p className="text-xs text-gray-400 pl-2 pb-2">기록 없음</p>
+        ) : (
+          <div className="pl-2 mb-2 space-y-1">
+            {(report.onlinePromotionActivities ?? []).map((a, i) => (
+              <div key={`${a.channel}-${i}`} className="text-xs text-gray-600 border-b border-gray-50 pb-1">
+                <span className="font-medium text-gray-800">{a.channel}</span>
+                <span className="ml-2">{a.count}건</span>
+                <span className="ml-2">{formatNumber(a.cost)}원</span>
+                {a.link && (
+                  <a
+                    href={a.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ml-2 text-blue-600 hover:underline break-all"
+                  >
+                    링크
+                  </a>
+                )}
+                {a.memo && <span className="ml-2 text-gray-400">{a.memo}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <p className="text-xs font-medium text-gray-500 mt-3 mb-1">오프라인 활동</p>
+        {(report.offlinePromotionActivities ?? []).length === 0 ? (
+          <p className="text-xs text-gray-400 pl-2 pb-2">기록 없음</p>
+        ) : (
+          <div className="pl-2 mb-2 space-y-1">
+            {(report.offlinePromotionActivities ?? []).map((a, i) => (
+              <div key={`${a.type}-${i}`} className="text-xs text-gray-600 border-b border-gray-50 pb-1">
+                <span className="font-medium text-gray-800">{a.type}</span>
+                <span className="ml-2">{a.quantity}개</span>
+                <span className="ml-2">{formatNumber(a.cost)}원</span>
+                {a.location && <span className="ml-2 text-gray-500">{a.location}</span>}
+                {a.memo && <span className="ml-2 text-gray-400">{a.memo}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <Row label="온라인 비용" value={`${formatNumber(report.onlinePromotionCost ?? 0)}원`} />
+        <Row label="오프라인 비용" value={`${formatNumber(report.offlinePromotionCost ?? 0)}원`} />
+        <Row label="총비용" value={`${formatNumber(report.totalPromotionCost ?? 0)}원`} />
+        <Row label="프로모션 문의" value={`${formatNumber(report.promotionInquiryCount ?? 0)}건`} />
+        <Row label="프로모션 방문" value={`${formatNumber(report.promotionVisitCount ?? 0)}건`} />
+        <Row label="프로모션 등록" value={`${formatNumber(report.promotionRegistrationCount ?? 0)}건`} />
+        <Row label="프로모션 매출" value={`${formatNumber(report.promotionSalesAmount ?? 0)}원`} />
+        {report.promotionNote && <Row label="프로모션 메모" value={report.promotionNote} />}
+        {report.promotionEvidenceLinks && (
+          <div className="py-2 border-b border-gray-100">
+            <p className="text-sm text-gray-500 mb-1">게시물·광고 링크</p>
+            <div className="space-y-0.5">
+              {report.promotionEvidenceLinks
+                .split(/\r?\n/)
+                .map((l) => l.trim())
+                .filter(Boolean)
+                .map((l, i) => (
+                  <a
+                    key={`${l}-${i}`}
+                    href={l}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block text-xs text-blue-600 hover:underline break-all"
+                  >
+                    {l}
+                  </a>
+                ))}
+            </div>
+          </div>
+        )}
+        {report.promotionEvidenceMemo && <Row label="증빙 메모" value={report.promotionEvidenceMemo} />}
+      </div>
+
+      {/* 기존 오프라인 홍보 기록 — 과거 2단계 입력값. 읽기 전용, 삭제하지 않는다. */}
+      {hasLegacyOfflinePromotion && (
+        <div className="bg-gray-50 rounded-xl border border-gray-200 p-4">
+          <h2 className="text-sm font-semibold text-gray-700 mb-1">기존 오프라인 홍보 기록</h2>
+          <p className="text-xs text-gray-400 mb-3">
+            이전 버전에서 2단계에 입력된 기록입니다 (읽기 전용).
+          </p>
+          {report.offlinePromotion ? (
+            <>
+              <div className="grid grid-cols-2 gap-x-4 pl-2 mb-2">
+                <Row label="전단지" value={`${report.offlinePromotion.flyer}개`} />
+                <Row label="현수막" value={`${report.offlinePromotion.placard}개`} />
+                <Row label="배너" value={`${report.offlinePromotion.banner}개`} />
+                <Row label="제휴" value={`${report.offlinePromotion.partnership}개`} />
+                <Row label="외부 행사" value={`${report.offlinePromotion.event}개`} />
+                <Row label="기타" value={`${report.offlinePromotion.other}개`} />
+              </div>
+              <Row label="홍보 합계" value={`${getOfflinePromoTotal(report)}개`} />
+            </>
+          ) : (
+            <Row label="오프라인 홍보" value={`${report.offlinePromotionCount ?? "-"}개`} />
+          )}
+          {report.promotionMemo && <Row label="기존 홍보 메모" value={report.promotionMemo} />}
+        </div>
+      )}
+
+      {/* 기존 캠페인 기록 — campaignResults 컬렉션의 과거 데이터. 읽기 전용. */}
+      {legacyCampaignResults.length > 0 && (
+        <div className="bg-gray-50 rounded-xl border border-gray-200 p-4">
+          <h2 className="text-sm font-semibold text-gray-700 mb-1">기존 캠페인 기록</h2>
+          <p className="text-xs text-gray-400 mb-3">
+            프로모션 관리로 전환되기 전 캠페인 실적입니다 (읽기 전용).
+          </p>
+          <div className="space-y-2">
+            {legacyCampaignResults.map((r) => (
+              <div key={r.id} className="border border-gray-200 rounded-lg bg-white p-3">
+                <p className="text-xs font-medium text-gray-700 mb-1">
+                  {legacyCampaignNames[r.campaignId] ?? r.campaignId}
+                </p>
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600">
+                  {Object.entries(r.metrics ?? {}).map(([key, value]) => (
+                    <span key={key}>
+                      {key} <b className="text-gray-800">{value ?? "-"}</b>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {issues.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
