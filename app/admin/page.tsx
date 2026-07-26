@@ -1,7 +1,8 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { getAllBranches } from "@/services/branches";
 import { getTodayAllReports, getAllReports } from "@/services/reports";
 import { getAllIssues } from "@/services/issues";
@@ -18,6 +19,10 @@ import {
   cn,
   formatDate,
   todayYMD,
+  getKoreaToday,
+  isValidDateKey,
+  isFutureKoreaDate,
+  addDaysToDateKey,
   calcPtConversionRate,
   formatPercent,
   getExpiringTmTotal,
@@ -26,7 +31,7 @@ import {
 } from "@/lib/utils";
 import type { Branch, DailyReport, Issue, Campaign } from "@/types";
 import { format, subDays } from "date-fns";
-import { XIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import { XIcon, ChevronDownIcon, ChevronRightIcon, ChevronLeftIcon } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -68,6 +73,9 @@ const PRINT_SECTIONS = [
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function AdminDashboardPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
   const [branches, setBranches] = useState<Branch[]>([]);
   const [reports, setReports] = useState<DailyReport[]>([]);
   const [reports7d, setReports7d] = useState<DailyReport[]>([]);
@@ -85,8 +93,37 @@ export default function AdminDashboardPage() {
     PRINT_SECTIONS.map((s) => s.key)
   );
 
-  const today = todayYMD();
-  const from7 = format(subDays(new Date(today), 6), "yyyy-MM-dd");
+  // 최근 7일·트레이너·캠페인 섹션은 이번 작업에서 건드리지 않으므로 실제 오늘 날짜를 그대로 사용한다.
+  const todayReal = todayYMD();
+  const from7 = format(subDays(new Date(todayReal), 6), "yyyy-MM-dd");
+
+  // 대시보드 첫 화면 기준일 — URL의 date 쿼리를 기준으로 결정 (없으면 오늘, 잘못된 값/미래 날짜면 오늘로 보정)
+  const rawDate = searchParams?.get("date") ?? "";
+  const hasValidRawDate = rawDate !== "" && isValidDateKey(rawDate) && !isFutureKoreaDate(rawDate);
+  const selectedDate = hasValidRawDate ? rawDate : getKoreaToday();
+  const isSelectedToday = selectedDate === getKoreaToday();
+
+  useEffect(() => {
+    if (rawDate && !hasValidRawDate) {
+      router.replace(`/admin?date=${getKoreaToday()}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawDate, hasValidRawDate]);
+
+  function goToDate(nextDate: string) {
+    router.push(`/admin?date=${nextDate}`);
+  }
+  function goToPrevDay() {
+    goToDate(addDaysToDateKey(selectedDate, -1));
+  }
+  function goToNextDay() {
+    const next = addDaysToDateKey(selectedDate, 1);
+    if (isFutureKoreaDate(next)) return;
+    goToDate(next);
+  }
+  function goToToday() {
+    goToDate(getKoreaToday());
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -96,10 +133,10 @@ export default function AdminDashboardPage() {
       try {
         const [bs, rs, iss, cps, rs7d] = await Promise.all([
           getAllBranches(),
-          getTodayAllReports(today),
-          getAllIssues(),
+          getTodayAllReports(selectedDate),
+          getAllIssues({ fromDate: selectedDate, toDate: selectedDate }),
           getAllCampaigns(),
-          getAllReports(from7, today),
+          getAllReports(from7, todayReal),
         ]);
         if (cancelled) return;
         setBranches(bs);
@@ -121,7 +158,7 @@ export default function AdminDashboardPage() {
     }
     void load();
     return () => { cancelled = true; };
-  }, [today, from7]);
+  }, [selectedDate, todayReal, from7]);
 
   if (loading) return <LoadingState />;
   if (error) {
@@ -240,15 +277,56 @@ export default function AdminDashboardPage() {
 
   return (
     <div className="space-y-6">
-      <PrintHeader title="관리자 전체 현황" subtitle={formatDate(today)} />
+      <PrintHeader title="관리자 전체 현황" subtitle={formatDate(selectedDate)} />
 
-      <div className="flex items-start justify-between gap-2">
-        <h1 className="text-base font-bold text-gray-900">관리자 ({formatDate(today)})</h1>
-        <PrintButton
-          sections={PRINT_SECTIONS}
-          selectedSections={printSections}
-          onSelectionChange={setPrintSections}
-        />
+      <div className="flex flex-col gap-2">
+        <div className="flex items-start justify-between gap-2 flex-wrap">
+          <h1 className="text-base font-bold text-gray-900">관리자</h1>
+          <PrintButton
+            sections={PRINT_SECTIONS}
+            selectedSections={printSections}
+            onSelectionChange={setPrintSections}
+          />
+        </div>
+        <div className="no-print flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={goToPrevDay}
+            aria-label="이전 날짜"
+            className="flex items-center justify-center w-10 h-10 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50"
+          >
+            <ChevronLeftIcon className="w-4 h-4" />
+          </button>
+          <input
+            type="date"
+            value={selectedDate}
+            max={getKoreaToday()}
+            onChange={(e) => e.target.value && goToDate(e.target.value)}
+            className="h-10 border border-gray-300 rounded-lg px-3 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]"
+          />
+          <button
+            type="button"
+            onClick={goToNextDay}
+            disabled={isSelectedToday}
+            aria-label="다음 날짜"
+            className="flex items-center justify-center w-10 h-10 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <ChevronRightIcon className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={goToToday}
+            disabled={isSelectedToday}
+            className="h-10 px-3 rounded-lg border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            오늘
+          </button>
+          {!isSelectedToday && (
+            <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-full">
+              과거 날짜 조회 중
+            </span>
+          )}
+        </div>
       </div>
 
       <PrintableSection sectionKey="today" selectedSections={printSections} className="space-y-6">
@@ -256,31 +334,39 @@ export default function AdminDashboardPage() {
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <KpiCard label="전체 지점"    value={branches.length} unit="개" />
         <KpiCard label="제출 완료"    value={submitted.length} unit="개"
-          subLabel={`${branches.length > 0 ? Math.round((submitted.length / branches.length) * 100) : 0}%`} />
-        <KpiCard label="미제출"       value={notSubmitted.length} unit="개" />
+          subLabel={`${branches.length > 0 ? Math.round((submitted.length / branches.length) * 100) : 0}%`}
+          onClick={() => router.push(`/admin/reports?date=${selectedDate}&status=submitted`)} />
+        <KpiCard label="미제출"       value={notSubmitted.length} unit="개"
+          onClick={() => router.push(`/admin/reports?date=${selectedDate}&status=missing`)} />
         <KpiCard label="수정 요청"    value={revisionNeeded.length} unit="건" />
         <KpiCard label="운영 이슈"    value={openIssues.length} unit="건"
-          subLabel={criticalIssues.length > 0 ? `긴급 ${criticalIssues.length}건` : undefined} />
-        <KpiCard label="전체 유효회원" value={totalActiveMembers.toLocaleString()} unit="명" />
+          subLabel={criticalIssues.length > 0 ? `긴급 ${criticalIssues.length}건` : undefined}
+          onClick={() => router.push(`/admin/issues?date=${selectedDate}`)} />
+        <KpiCard label="전체 유효회원" value={totalActiveMembers.toLocaleString()} unit="명"
+          subLabel="선택일 기준 제출 지점 합계" />
       </div>
 
       {/* Submission + not-submitted */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
           <p className="text-sm font-semibold text-gray-700 mb-3">제출 현황</p>
-          <div className="flex items-center gap-6">
-            <SubmissionDonut submitted={submitted.length} total={branches.length} />
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-green-600" />
-                <span className="text-xs text-gray-600">제출 완료 {submitted.length}개</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-red-200" />
-                <span className="text-xs text-gray-600">미제출 {notSubmitted.length}개</span>
+          {submitted.length === 0 && notSubmitted.length === branches.length ? (
+            <p className="text-sm text-gray-400">선택한 날짜에 제출된 보고서가 없습니다.</p>
+          ) : (
+            <div className="flex items-center gap-6">
+              <SubmissionDonut submitted={submitted.length} total={branches.length} />
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-green-600" />
+                  <span className="text-xs text-gray-600">제출 완료 {submitted.length}개</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-red-200" />
+                  <span className="text-xs text-gray-600">미제출 {notSubmitted.length}개</span>
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
           <p className="text-sm font-semibold text-gray-700 mb-3">미제출 지점</p>
@@ -299,15 +385,45 @@ export default function AdminDashboardPage() {
         </div>
       </div>
 
-      {/* Today metrics */}
+      {/* 선택일 보고서 목록 (지점별 제출 상태) */}
       <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-        <p className="text-sm font-semibold text-gray-700 mb-3">오늘 지표 (전체)</p>
+        <p className="text-sm font-semibold text-gray-700 mb-3">
+          {formatDate(selectedDate)} 보고서 목록
+        </p>
+        {submitted.length === 0 ? (
+          <p className="text-sm text-gray-400">선택한 날짜에 제출된 보고서가 없습니다.</p>
+        ) : (
+          <div className="space-y-1 max-h-56 overflow-y-auto">
+            {submitted.map((r) => {
+              const branch = branches.find((b) => b.id === r.branchId);
+              return (
+                <Link
+                  key={r.id}
+                  href={`/admin/reports/${r.id}`}
+                  className="flex items-center justify-between py-1.5 px-2 -mx-2 rounded hover:bg-gray-50"
+                >
+                  <span className="text-sm text-gray-700">{branch?.name ?? r.branchId}</span>
+                  <span className="text-xs text-gray-400">유효회원 {r.activeMembers ?? "-"}명</span>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Selected-date metrics */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+        <p className="text-sm font-semibold text-gray-700 mb-3">
+          {isSelectedToday ? "오늘 지표 (전체)" : "선택일 지표 (전체)"}
+        </p>
         <ConversionFunnel
           inquiries={totalInquiries}
           consultations={totalPtConsult}
           registrations={totalPtReg}
         />
-        <p className="text-xs text-gray-400 mt-2">오늘 PT 전환율: <strong>{formatPercent(overallConvRate)}</strong></p>
+        <p className="text-xs text-gray-400 mt-2">
+          {isSelectedToday ? "오늘" : "선택일"} PT 전환율: <strong>{formatPercent(overallConvRate)}</strong>
+        </p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
           <KpiCard label="재등록"   value={totalReReg}   unit="명" />
           <KpiCard label="컴백회원" value={totalComeback} unit="명" />
@@ -326,7 +442,7 @@ export default function AdminDashboardPage() {
       <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm space-y-4">
         <div className="flex items-center justify-between">
           <p className="text-sm font-semibold text-gray-700">최근 7일 실적 (전 지점 합산)</p>
-          <span className="text-xs text-gray-400">{formatDate(from7)} ~ {formatDate(today)}</span>
+          <span className="text-xs text-gray-400">{formatDate(from7)} ~ {formatDate(todayReal)}</span>
         </div>
 
         <div>

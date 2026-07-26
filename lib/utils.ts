@@ -41,11 +41,26 @@ export function getKoreaToday(): string {
   return todayYMD();
 }
 
+export function addDaysToDateKey(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
+}
+
 export function getKoreaYesterday(): string {
-  const [y, m, d] = getKoreaToday().split("-").map(Number);
-  const utcMidnight = new Date(Date.UTC(y, m - 1, d));
-  utcMidnight.setUTCDate(utcMidnight.getUTCDate() - 1);
-  return utcMidnight.toISOString().slice(0, 10);
+  return addDaysToDateKey(getKoreaToday(), -1);
+}
+
+// "YYYY-MM-DD" 형식이면서 실제로 존재하는 달력 날짜인지 확인 (예: "2026-13-45" 차단)
+export function isValidDateKey(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const d = new Date(`${value}T00:00:00Z`);
+  return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
+}
+
+export function isFutureKoreaDate(value: string): boolean {
+  return value > getKoreaToday();
 }
 
 export type ReportDatePermission = "ok" | "future_blocked" | "too_old_blocked";
