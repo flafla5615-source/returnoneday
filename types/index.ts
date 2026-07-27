@@ -335,6 +335,18 @@ export interface TrainerSession {
   otherSessionCount: number;
   totalSessionCount: number; // 자동 계산 (pt + ot + group + other)
 
+  // ── 등록·매출 ──────────────────────────────────────────────────────────────
+  // 워크인 = 센터 유입 (센터광고 / 전화 / 방문 / 인스타 / 네이버 등)
+  // 개인   = 트레이너 개인 유입 (소개 / 기존회원소개 / 개인SNS / 개인영업 등)
+  // 기존 문서에는 이 필드가 없으므로 optional이며, 조회 시 0으로 취급한다.
+  // (마이그레이션하지 않는다 — types/index.ts의 legacy 정책과 동일)
+  walkInRegistrationCount?: number;
+  walkInSalesAmount?: number;
+  personalRegistrationCount?: number;
+  personalSalesAmount?: number;
+  totalRegistrationCount?: number; // 자동 계산 (워크인 + 개인 등록건수)
+  totalSalesAmount?: number;       // 자동 계산 (워크인 + 개인 매출)
+
   memo?: string;
 
   createdBy: string;

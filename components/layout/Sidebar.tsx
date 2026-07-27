@@ -41,6 +41,7 @@ const managerNav: NavItem[] = [
   { label: "회원관리", href: "/manager/members", icon: <UsersIcon className="w-4 h-4" /> },
   { label: "운영 이슈", href: "/manager/issues", icon: <AlertCircleIcon className="w-4 h-4" /> },
   { label: "프로모션 관리", href: "/manager/promotions", icon: <MegaphoneIcon className="w-4 h-4" /> },
+  { label: "트레이너 실적", href: "/manager/trainers", icon: <DumbbellIcon className="w-4 h-4" /> },
   { label: "설정", href: "/manager/settings", icon: <SettingsIcon className="w-4 h-4" /> },
 ];
 

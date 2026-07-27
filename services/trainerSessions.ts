@@ -39,6 +39,11 @@ export type UpsertTrainerSessionInput = {
   otSessionCount?: number | null;
   groupSessionCount?: number | null;
   otherSessionCount?: number | null;
+  // 워크인 = 센터 유입, 개인 = 트레이너 개인 유입
+  walkInRegistrationCount?: number | null;
+  walkInSalesAmount?: number | null;
+  personalRegistrationCount?: number | null;
+  personalSalesAmount?: number | null;
   memo?: string;
   createdBy: string;
   isTestData?: boolean;
@@ -53,6 +58,14 @@ export async function upsertTrainerSession(
   const otherSessionCount = sanitizeCount(input.otherSessionCount);
   const totalSessionCount =
     ptSessionCount + otSessionCount + groupSessionCount + otherSessionCount;
+
+  // 등록건수·매출도 0 이상 정수로만 저장한다 (원 단위)
+  const walkInRegistrationCount = sanitizeCount(input.walkInRegistrationCount);
+  const walkInSalesAmount = sanitizeCount(input.walkInSalesAmount);
+  const personalRegistrationCount = sanitizeCount(input.personalRegistrationCount);
+  const personalSalesAmount = sanitizeCount(input.personalSalesAmount);
+  const totalRegistrationCount = walkInRegistrationCount + personalRegistrationCount;
+  const totalSalesAmount = walkInSalesAmount + personalSalesAmount;
 
   const id = trainerSessionId(input.branchId, input.date, input.trainerId);
   const now = Timestamp.now();
@@ -71,6 +84,12 @@ export async function upsertTrainerSession(
     groupSessionCount,
     otherSessionCount,
     totalSessionCount,
+    walkInRegistrationCount,
+    walkInSalesAmount,
+    personalRegistrationCount,
+    personalSalesAmount,
+    totalRegistrationCount,
+    totalSalesAmount,
     memo: memo || "",
     createdBy: input.createdBy,
     createdAt: now,

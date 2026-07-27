@@ -52,8 +52,28 @@ type TrainerPerfState = {
   otSessionCount: number;
   groupSessionCount: number;
   otherSessionCount: number;
+  // 워크인 = 센터 유입(센터광고/전화/방문/인스타/네이버 등)
+  walkInRegistrationCount: number;
+  walkInSalesAmount: number;
+  // 개인 = 트레이너 개인 유입(소개/기존회원소개/개인SNS/개인영업 등)
+  personalRegistrationCount: number;
+  personalSalesAmount: number;
   memo: string;
 };
+
+const emptyTrainerPerf = (trainerId: string, trainerName: string): TrainerPerfState => ({
+  trainerId,
+  trainerName,
+  ptSessionCount: 0,
+  otSessionCount: 0,
+  groupSessionCount: 0,
+  otherSessionCount: 0,
+  walkInRegistrationCount: 0,
+  walkInSalesAmount: 0,
+  personalRegistrationCount: 0,
+  personalSalesAmount: 0,
+  memo: "",
+});
 
 const CLAIM_CATEGORIES = ["회원 응대", "환불", "시설 불만", "직원 불만", "기타"];
 const STAFF_CATEGORIES = ["결근", "퇴사 예정", "채용 필요", "직원 갈등", "기타"];
@@ -249,18 +269,7 @@ export default function NewReportPage() {
   function handleAddTrainer(trainer: Trainer) {
     setTrainerPerfs((prev) => {
       if (prev.some((p) => p.trainerId === trainer.id)) return prev;
-      return [
-        ...prev,
-        {
-          trainerId: trainer.id,
-          trainerName: trainer.name,
-          ptSessionCount: 0,
-          otSessionCount: 0,
-          groupSessionCount: 0,
-          otherSessionCount: 0,
-          memo: "",
-        },
-      ];
+      return [...prev, emptyTrainerPerf(trainer.id, trainer.name)];
     });
   }
 
@@ -336,6 +345,11 @@ export default function NewReportPage() {
             otSessionCount: s.otSessionCount,
             groupSessionCount: s.groupSessionCount,
             otherSessionCount: s.otherSessionCount,
+            // 매출 필드가 없는 기존 문서는 0으로 표시한다 (마이그레이션 없음)
+            walkInRegistrationCount: s.walkInRegistrationCount ?? 0,
+            walkInSalesAmount: s.walkInSalesAmount ?? 0,
+            personalRegistrationCount: s.personalRegistrationCount ?? 0,
+            personalSalesAmount: s.personalSalesAmount ?? 0,
             memo: s.memo ?? "",
           }))
         );
@@ -539,6 +553,10 @@ export default function NewReportPage() {
             otSessionCount: perf.otSessionCount,
             groupSessionCount: perf.groupSessionCount,
             otherSessionCount: perf.otherSessionCount,
+            walkInRegistrationCount: perf.walkInRegistrationCount,
+            walkInSalesAmount: perf.walkInSalesAmount,
+            personalRegistrationCount: perf.personalRegistrationCount,
+            personalSalesAmount: perf.personalSalesAmount,
             memo: perf.memo,
             createdBy: user.uid,
           });
@@ -563,6 +581,10 @@ export default function NewReportPage() {
             otSessionCount: 0,
             groupSessionCount: 0,
             otherSessionCount: 0,
+            walkInRegistrationCount: 0,
+            walkInSalesAmount: 0,
+            personalRegistrationCount: 0,
+            personalSalesAmount: 0,
             memo: "",
             createdBy: user.uid,
           });
@@ -1454,21 +1476,15 @@ export default function NewReportPage() {
                   >
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-sm font-semibold text-gray-800">{perf.trainerName}</p>
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-bold text-[#1e3a5f]">
-                          총 세션 {totalSessions}회
-                          <span className="ml-1 text-xs font-normal text-gray-400">자동 계산</span>
-                        </p>
-                        {canEditReport && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveTrainer(perf.trainerId)}
-                            className="text-xs text-gray-400 hover:text-red-500"
-                          >
-                            제거
-                          </button>
-                        )}
-                      </div>
+                      {canEditReport && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveTrainer(perf.trainerId)}
+                          className="text-xs text-gray-400 hover:text-red-500"
+                        >
+                          제거
+                        </button>
+                      )}
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
@@ -1505,6 +1521,96 @@ export default function NewReportPage() {
                       ))}
                     </div>
 
+                    {/* 워크인 = 센터 유입 / 개인 = 트레이너 개인 유입 */}
+                    <div className="pt-2 border-t border-gray-100 space-y-2">
+                      <p className="text-xs font-medium text-gray-700">
+                        워크인 <span className="font-normal text-gray-400">센터 유입 (센터광고·전화·방문·인스타·네이버 등)</span>
+                      </p>
+                      <div className="grid grid-cols-2 gap-3">
+                        {(
+                          [
+                            { label: "등록건수", field: "walkInRegistrationCount" as const, val: perf.walkInRegistrationCount, unit: "건" },
+                            { label: "매출", field: "walkInSalesAmount" as const, val: perf.walkInSalesAmount, unit: "원" },
+                          ] as const
+                        ).map(({ label, field, val, unit }) => (
+                          <div key={field} className="flex flex-col gap-1">
+                            <label className="text-xs text-gray-600">{label}</label>
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number"
+                                inputMode="numeric"
+                                min={0}
+                                step={1}
+                                value={val === 0 ? "" : val}
+                                placeholder="0"
+                                disabled={!canEditReport}
+                                onChange={(e) =>
+                                  updateTrainerPerf(perf.trainerId, { [field]: parseCount(e.target.value) })
+                                }
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-50 disabled:text-gray-400"
+                              />
+                              <span className="text-xs text-gray-500 whitespace-nowrap">{unit}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium text-gray-700">
+                        개인 <span className="font-normal text-gray-400">개인 유입 (소개·기존회원소개·개인SNS·개인영업 등)</span>
+                      </p>
+                      <div className="grid grid-cols-2 gap-3">
+                        {(
+                          [
+                            { label: "등록건수", field: "personalRegistrationCount" as const, val: perf.personalRegistrationCount, unit: "건" },
+                            { label: "매출", field: "personalSalesAmount" as const, val: perf.personalSalesAmount, unit: "원" },
+                          ] as const
+                        ).map(({ label, field, val, unit }) => (
+                          <div key={field} className="flex flex-col gap-1">
+                            <label className="text-xs text-gray-600">{label}</label>
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number"
+                                inputMode="numeric"
+                                min={0}
+                                step={1}
+                                value={val === 0 ? "" : val}
+                                placeholder="0"
+                                disabled={!canEditReport}
+                                onChange={(e) =>
+                                  updateTrainerPerf(perf.trainerId, { [field]: parseCount(e.target.value) })
+                                }
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-50 disabled:text-gray-400"
+                              />
+                              <span className="text-xs text-gray-500 whitespace-nowrap">{unit}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* 자동 계산 — 총세션 / 총등록 / 총매출 */}
+                    <div className="grid grid-cols-3 gap-2 bg-gray-50 rounded-lg px-3 py-2">
+                      <div>
+                        <p className="text-[11px] text-gray-500">총 세션</p>
+                        <p className="text-sm font-bold text-gray-800">{totalSessions}회</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] text-gray-500">총 등록</p>
+                        <p className="text-sm font-bold text-gray-800">
+                          {perf.walkInRegistrationCount + perf.personalRegistrationCount}건
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] text-gray-500">총 매출</p>
+                        <p className="text-sm font-bold text-[#1e3a5f]">
+                          {formatNumber(perf.walkInSalesAmount + perf.personalSalesAmount)}원
+                        </p>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-gray-400 -mt-1">총계는 자동 계산됩니다.</p>
+
                     <div>
                       <label className="text-xs font-medium text-gray-700 block mb-1">메모 (선택)</label>
                       <textarea
@@ -1522,17 +1628,41 @@ export default function NewReportPage() {
                 );
               })}
 
-              <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 flex items-center justify-between">
+              <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 space-y-1">
                 <span className="text-xs text-blue-700 font-medium">트레이너 합계</span>
-                <p className="text-sm font-bold text-blue-800">
-                  총 세션{" "}
-                  {trainerPerfs.reduce(
-                    (s, p) =>
-                      s + p.ptSessionCount + p.otSessionCount +
-                      p.groupSessionCount + p.otherSessionCount,
-                    0
-                  )}회
-                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <p className="text-[11px] text-blue-600">총 세션</p>
+                    <p className="text-sm font-bold text-blue-800">
+                      {trainerPerfs.reduce(
+                        (s, p) =>
+                          s + p.ptSessionCount + p.otSessionCount +
+                          p.groupSessionCount + p.otherSessionCount,
+                        0
+                      )}회
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] text-blue-600">총 등록</p>
+                    <p className="text-sm font-bold text-blue-800">
+                      {trainerPerfs.reduce(
+                        (s, p) => s + p.walkInRegistrationCount + p.personalRegistrationCount,
+                        0
+                      )}건
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] text-blue-600">총 매출</p>
+                    <p className="text-sm font-bold text-blue-800">
+                      {formatNumber(
+                        trainerPerfs.reduce(
+                          (s, p) => s + p.walkInSalesAmount + p.personalSalesAmount,
+                          0
+                        )
+                      )}원
+                    </p>
+                  </div>
+                </div>
               </div>
             </>
           )}
