@@ -235,6 +235,31 @@ export interface Issue {
   updatedAt: Timestamp;
 }
 
+// ─── Branch Monthly Target (지점 월 목표) ─────────────────────────────────────
+// 문서 ID: {branchId}_{yearMonth} — 지점·월 조합당 1건만 존재한다.
+// 목표를 입력하지 않은 항목은 null로 두고, 화면에서 "목표 미설정"으로 구분한다
+// (0으로 저장해 달성률 0%처럼 보이게 하지 않는다).
+
+export interface BranchMonthlyTarget {
+  id: string;
+  branchId: string;
+  yearMonth: string; // YYYY-MM
+
+  targetSalesAmount?: number | null;
+  targetNewMembers?: number | null;
+  targetRenewals?: number | null;
+  targetComebacks?: number | null;
+  targetRegistrations?: number | null;
+  targetInquiries?: number | null;
+  targetPtSalesAmount?: number | null;
+  targetTrainerSalesAmount?: number | null;
+
+  createdBy: string;
+  createdAt: Timestamp;
+  updatedBy?: string;
+  updatedAt: Timestamp;
+}
+
 // ─── Campaign (deprecated — Promotion으로 대체됨) ──────────────────────────────
 // 신규 등록·입력에는 사용하지 않는다. 과거 보고서의 "기존 캠페인 기록"을
 // 읽기 전용으로 조회하기 위해서만 유지한다.

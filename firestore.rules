@@ -145,6 +145,28 @@ service cloud.firestore {
         && !('password' in data);
     }
 
+    // 지점 월 목표 검증 — 필드 화이트리스트 + 목표값은 null(미설정) 또는 0 이상 정수만 허용
+    function validBranchTargetData(targetId, data) {
+      return data.keys().hasOnly([
+          'id', 'branchId', 'yearMonth',
+          'targetSalesAmount', 'targetNewMembers', 'targetRenewals', 'targetComebacks',
+          'targetRegistrations', 'targetInquiries', 'targetPtSalesAmount',
+          'targetTrainerSalesAmount',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+        ])
+        && data.branchId is string && data.branchId.size() > 0
+        && data.yearMonth is string && data.yearMonth.size() == 7
+        && targetId == data.branchId + '_' + data.yearMonth
+        && validPromotionAmount(data.targetSalesAmount)
+        && validPromotionAmount(data.targetNewMembers)
+        && validPromotionAmount(data.targetRenewals)
+        && validPromotionAmount(data.targetComebacks)
+        && validPromotionAmount(data.targetRegistrations)
+        && validPromotionAmount(data.targetInquiries)
+        && validPromotionAmount(data.targetPtSalesAmount)
+        && validPromotionAmount(data.targetTrainerSalesAmount);
+    }
+
     function validCampaignResultData(reportId, data) {
       return data.reportId == reportId
         && data.branchId == getReportData(reportId).branchId
@@ -323,6 +345,16 @@ service cloud.firestore {
           && validPromotionData(request.resource.data));
 
       allow delete: if false;
+    }
+
+    // ─── branchMonthlyTargets (지점 월 목표) ────────────────────────────────
+    // 목표 등록·수정은 admin만 가능하다.
+    // branch_manager는 본인 담당 지점의 목표·달성률만 조회할 수 있다.
+    match /branchMonthlyTargets/{targetId} {
+      allow read: if isAdmin() ||
+        (isActiveManager() && resource.data.branchId in getUserData().branchIds);
+      allow create, update: if isAdmin() && validBranchTargetData(targetId, request.resource.data);
+      allow delete: if isAdmin();
     }
 
     // ─── campaigns (deprecated — promotions로 대체) ─────────────────────────

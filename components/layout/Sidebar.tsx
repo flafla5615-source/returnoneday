@@ -15,6 +15,7 @@ import {
   FileTextIcon,
   LogOutIcon,
   DumbbellIcon,
+  TrendingUpIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -47,6 +48,7 @@ const managerNav: NavItem[] = [
 
 const adminNav: NavItem[] = [
   { label: "오늘 현황", href: "/admin", icon: <HomeIcon className="w-4 h-4" />, exact: true },
+  { label: "통합 KPI", href: "/admin/kpi", icon: <TrendingUpIcon className="w-4 h-4" /> },
   { label: "지점 내역", href: "/admin/branches", icon: <BuildingIcon className="w-4 h-4" /> },
   { label: "보고 관리", href: "/admin/reports", icon: <ClipboardListIcon className="w-4 h-4" /> },
   { label: "운영 이슈", href: "/admin/issues", icon: <AlertCircleIcon className="w-4 h-4" /> },
