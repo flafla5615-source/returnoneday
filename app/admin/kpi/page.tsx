@@ -28,6 +28,8 @@ import {
 } from "@/services/trainerPerformance";
 import LoadingState from "@/components/common/LoadingState";
 import PrintHeader from "@/components/print/PrintHeader";
+import ChatAssistant from "@/components/chat/ChatAssistant";
+import type { ChatContext } from "@/services/chatContext";
 import { cn, formatNumber, formatDate, getKoreaToday } from "@/lib/utils";
 import type { Branch, DailyReport, Issue, Promotion, TrainerSession, BranchMonthlyTarget } from "@/types";
 import {
@@ -233,6 +235,34 @@ export default function AdminKpiPage() {
       .slice(0, 5);
     function label(s: string) { return s; }
   }, [trainerRows]);
+
+  // 챗봇에 넘길 스냅샷 — 화면에서 이미 계산한 값을 그대로 쓴다 (재계산하지 않음)
+  const chatContext: ChatContext | null = useMemo(() => {
+    if (loading || branchKpis.length === 0) return null;
+    const scopeParts = [
+      branchFilter ? branchNameOf(branchFilter) : null,
+      brandFilter || null,
+      regionFilter || null,
+    ].filter(Boolean);
+    return {
+      period: { from, to, label: KPI_PERIOD_LABELS[preset] },
+      scope: scopeParts.length > 0 ? scopeParts.join(" / ") : "전 지점",
+      totals,
+      branches: branchKpis,
+      trainers: trainerRows,
+      promotions: promotionKpis.map((p) => ({
+        promotionName: p.promotionName,
+        branchName: p.branchName,
+        totalCost: p.totalCost,
+        registrations: p.registrations,
+        sales: p.sales,
+        roas: p.roas,
+      })),
+    };
+  }, [
+    loading, branchKpis, trainerRows, promotionKpis, totals,
+    from, to, preset, branchFilter, brandFilter, regionFilter, branchNameOf,
+  ]);
 
   function openTargetModal(branchId: string, branchName: string) {
     const t = targets.find((x) => x.branchId === branchId);
@@ -1055,6 +1085,9 @@ export default function AdminKpiPage() {
         기간별로 합산해 계산합니다. 누적 문서를 따로 저장하지 않으므로 같은 날짜 보고서를 수정해도
         이중 집계되지 않습니다. 제출 완료(submitted/locked) 보고서만 집계합니다.
       </p>
+
+      {/* 데이터 어시스턴트 — 위에서 계산한 값만 근거로 답한다 */}
+      <ChatAssistant context={chatContext} />
     </div>
   );
 }
