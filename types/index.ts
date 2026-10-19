@@ -468,3 +468,76 @@ export interface MemberImportJob {
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
+
+// ─── branchShiftReports (지점별 일일보고 — 오전/마감 교대 보고) ─────────────────
+// 기존 dailyReports(수치 기반 보고)와는 완전히 별개인 신규 컬렉션이다.
+// dailyReports / promotions / KPI 데이터는 그대로 보존하며 이 컬렉션과 섞지 않는다.
+//
+// Doc ID: {branchId}_{reportDate}_{shift}
+//   → 같은 지점·같은 날짜·같은 보고 유형은 문서가 하나뿐이므로 중복 제출이 불가능하다.
+
+export type ShiftType = "morning" | "closing";
+
+export const SHIFT_LABEL: Record<ShiftType, string> = {
+  morning: "오전 보고",
+  closing: "마감 보고",
+};
+
+/** 보고 유형별 제출 기한 (KST, HH:mm) */
+export const SHIFT_DEADLINE: Record<ShiftType, string> = {
+  morning: "09:30",
+  closing: "21:00",
+};
+
+export const SHIFT_TYPES: ShiftType[] = ["morning", "closing"];
+
+export type ShiftReportStatus = "draft" | "submitted";
+
+/** 자유형식 본문 최대 길이 — Firestore 문서 크기(1MB) 안에서 수정 이력까지 보관하기 위한 상한 */
+export const SHIFT_CONTENT_MAX_LENGTH = 5000;
+
+/** 문서에 보관하는 수정 이력 최대 개수 (초과 시 오래된 것부터 버리고 editCount로 총횟수를 유지) */
+export const SHIFT_EDIT_HISTORY_LIMIT = 20;
+
+export interface ShiftReportEdit {
+  editedAt: Timestamp;
+  editedByUid: string;
+  editedByName: string;
+  /** 수정 직전 본문 — 무엇이 바뀌었는지 본사에서 확인할 수 있게 남긴다 */
+  previousContent: string;
+}
+
+export interface BranchShiftReport {
+  id: string;
+  branchId: string;
+  branchName: string;
+  reportDate: string; // YYYY-MM-DD (KST)
+  shift: ShiftType;
+  content: string; // 자유형식 텍스트
+  status: ShiftReportStatus;
+  writerUid: string;
+  writerName: string;
+  /** 제출 시각 (serverTimestamp). 정시/지연은 저장하지 않고 이 값으로 조회 시 계산한다. */
+  submittedAt?: Timestamp;
+  /** 제출 이후 수정 횟수 (이력 배열이 잘려도 총횟수는 유지된다) */
+  editCount: number;
+  edits: ShiftReportEdit[];
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+/** 제출 현황 — 저장값이 아니라 submittedAt과 기한을 비교해 조회 시 계산한다. */
+export type ShiftSubmissionState =
+  | "on_time" // 기한 내 제출
+  | "late" // 기한 넘겨 제출
+  | "draft" // 임시저장만 된 상태
+  | "pending" // 아직 기한 전, 미작성
+  | "missing"; // 기한이 지났는데 제출 없음
+
+export const SHIFT_SUBMISSION_STATE_LABEL: Record<ShiftSubmissionState, string> = {
+  on_time: "정시 제출",
+  late: "지연 제출",
+  draft: "임시저장",
+  pending: "작성 전",
+  missing: "미제출",
+};

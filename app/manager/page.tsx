@@ -2,343 +2,154 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { getBranchesByIds } from "@/services/branches";
-import { getReport, getRecentReports, reopenAbnormalSubmittedReport } from "@/services/reports";
-import { getActivePromotionsForDate } from "@/services/promotions";
-import { getAllIssues } from "@/services/issues";
-import KpiCard from "@/components/dashboard/KpiCard";
-import TrendChart from "@/components/dashboard/TrendChart";
-import { ReportStatusBadge } from "@/components/common/StatusBadge";
-import PrintButton from "@/components/print/PrintButton";
-import PrintHeader from "@/components/print/PrintHeader";
+import { getShiftReportsForDay, resolveSubmissionState } from "@/services/shiftReports";
+import ShiftNotice from "@/components/reports/ShiftNotice";
+import { ShiftStateBadge } from "@/components/common/StatusBadge";
 import LoadingState from "@/components/common/LoadingState";
+import { formatDate, formatDateTime, getKoreaToday } from "@/lib/utils";
 import {
-  todayYMD,
-  formatDate,
-  calcPtConversionRate,
-  formatPercent,
-  diffLabel,
-  isAbnormalSubmittedReport,
-} from "@/lib/utils";
-import type { Branch, DailyReport, Promotion, Issue } from "@/types";
-import { format, subDays } from "date-fns";
-import { AlertCircleIcon, PlusCircleIcon } from "lucide-react";
+  SHIFT_DEADLINE,
+  SHIFT_LABEL,
+  SHIFT_TYPES,
+  type Branch,
+  type BranchShiftReport,
+  type ShiftType,
+} from "@/types";
+import { ClipboardListIcon } from "lucide-react";
+
+type ReportMap = Record<ShiftType, BranchShiftReport | null>;
 
 export default function ManagerHomePage() {
-  const router = useRouter();
   const { profile } = useAuth();
-  const [branches, setBranches] = useState<Branch[]>([]);
-  const [selectedBranchId, setSelectedBranchId] = useState("");
-  const [todayReport, setTodayReport] = useState<DailyReport | null | undefined>(undefined);
-  const [yesterdayReport, setYesterdayReport] = useState<DailyReport | null>(null);
-  const [recentReports, setRecentReports] = useState<DailyReport[]>([]);
-  const [activePromotions, setActivePromotions] = useState<Promotion[]>([]);
-  const [issues, setIssues] = useState<Issue[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [rewriteLoading, setRewriteLoading] = useState(false);
+  const today = getKoreaToday();
 
-  const today = todayYMD();
-  const yesterday = format(subDays(new Date(today), 1), "yyyy-MM-dd");
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [branchId, setBranchId] = useState("");
+  const [reports, setReports] = useState<ReportMap>({ morning: null, closing: null });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!profile) return;
-    console.log("manager home profile:", { uid: profile.uid, name: profile.name, branchIds: profile.branchIds });
-    getBranchesByIds(profile.branchIds).then((bs) => {
-      console.log("branches:", bs.length, bs.map((b) => b.name));
-      setBranches(bs);
-      if (bs.length > 0) {
-        const storageKey = `returnlife_branch_${profile.uid}`;
-        const saved = localStorage.getItem(storageKey);
-        const restored = bs.find((b) => b.id === saved);
-        setSelectedBranchId(restored ? restored.id : bs[0].id);
-      }
-      if (bs.length === 0) setLoading(false);
-    }).catch((err) => {
-      console.error("admin dashboard load error:", err);
-      setLoadError("지점 정보를 불러오지 못했습니다. 관리자에게 지점 배정을 요청하세요.");
-      setLoading(false);
-    });
+    getBranchesByIds(profile.branchIds)
+      .then((bs) => {
+        setBranches(bs);
+        if (bs.length > 0) setBranchId((prev) => prev || bs[0].id);
+        else setLoading(false);
+      })
+      .catch((err) => {
+        console.error("manager home branches load failed:", err);
+        setError("지점 정보를 불러오지 못했습니다. 관리자에게 지점 배정을 요청하세요.");
+        setLoading(false);
+      });
   }, [profile]);
 
   useEffect(() => {
-    if (!selectedBranchId) return;
+    if (!branchId) return;
     let cancelled = false;
-
-    async function loadData() {
+    (async () => {
+      setLoading(true);
       try {
-        console.log("manager home loading:", { selectedBranchId, today });
-        const [tr, yr, rr, ac, iss] = await Promise.all([
-          getReport(selectedBranchId, today),
-          getReport(selectedBranchId, yesterday),
-          getRecentReports(selectedBranchId, 7),
-          getActivePromotionsForDate(selectedBranchId, today),
-          getAllIssues({ branchId: selectedBranchId, status: "open" }),
-        ]);
-        if (cancelled) return;
-        console.log("selected branch:", selectedBranchId);
-        console.log("loaded reports:", rr.map((r) => r.id));
-        console.log("dashboard totals:", {
-          activeMembers: tr?.activeMembers ?? null,
-          ptConsultations: tr?.ptConsultations ?? null,
-          ptRegistrations: tr?.ptRegistrations ?? null,
-          recentCount: rr.length,
-          todayStatus: tr?.status ?? "없음",
-        });
-        setTodayReport(tr);
-        setYesterdayReport(yr);
-        setRecentReports(rr);
-        setActivePromotions(ac);
-        setIssues(iss);
+        const loaded = await getShiftReportsForDay(branchId, today);
+        if (!cancelled) setReports(loaded);
       } catch (err) {
-        console.error("dashboard load failed:", err);
-        if (!cancelled) setLoadError("데이터를 불러오지 못했습니다.");
+        console.error("manager home shift reports load failed:", err);
+        if (!cancelled) setError("오늘 보고 현황을 불러오지 못했습니다.");
       } finally {
         if (!cancelled) setLoading(false);
       }
-    }
-
-    void loadData();
+    })();
     return () => {
       cancelled = true;
     };
-  }, [selectedBranchId, today, yesterday]);
+  }, [branchId, today]);
 
-  const selectedBranch = branches.find((b) => b.id === selectedBranchId);
+  if (!profile) return <LoadingState />;
 
-  const trendData = recentReports
-    .slice()
-    .reverse()
-    .map((r) => ({
-      date: formatDate(r.reportDate).slice(5),
-      value: r.activeMembers ?? 0,
-    }));
-
-  const convRate = todayReport
-    ? calcPtConversionRate(todayReport.ptConsultations, todayReport.ptRegistrations)
-    : null;
-
-  if (loading && todayReport === undefined) return <LoadingState />;
-
-  if (loadError) {
+  if (error) {
     return (
-      <div className="rounded-xl border border-red-200 bg-red-50 p-6 space-y-1">
+      <div className="space-y-1 rounded-xl border border-red-200 bg-red-50 p-6">
         <p className="text-sm font-semibold text-red-700">데이터 로드 실패</p>
-        <p className="text-sm text-red-500">{loadError}</p>
+        <p className="text-sm text-red-500">{error}</p>
       </div>
     );
   }
 
   if (!loading && branches.length === 0) {
     return (
-      <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 space-y-1">
+      <div className="space-y-1 rounded-xl border border-amber-200 bg-amber-50 p-6">
         <p className="text-sm font-semibold text-amber-700">배정된 지점 없음</p>
-        <p className="text-sm text-amber-600">관리자에게 지점 배정을 요청하세요. 배정 후 다시 로그인해주세요.</p>
+        <p className="text-sm text-amber-600">
+          관리자에게 지점 배정을 요청하세요. 배정 후 다시 로그인해주세요.
+        </p>
       </div>
     );
   }
 
-  const isTodayReportAbnormal = isAbnormalSubmittedReport(todayReport);
-  const reportStatus = isTodayReportAbnormal ? null : (todayReport?.status ?? null);
-
-  async function handleRewriteAbnormalReport() {
-    if (!todayReport) return;
-    setRewriteLoading(true);
-    setLoadError(null);
-    try {
-      await reopenAbnormalSubmittedReport(todayReport.id);
-      router.push(`/manager/report/new?branchId=${todayReport.branchId}&date=${todayReport.reportDate}`);
-    } catch (error) {
-      console.error("abnormal report reopen failed:", error);
-      const code = (error as { code?: string })?.code ?? "unknown";
-      console.error("abnormal report reopen code:", code);
-      setLoadError(
-        code === "permission-denied"
-          ? "보고서를 다시 작성할 권한이 없습니다. 관리자에게 문의하세요. (permission-denied)"
-          : "보고서를 다시 작성 상태로 변경하지 못했습니다."
-      );
-    } finally {
-      setRewriteLoading(false);
-    }
-  }
-
   return (
-    <div className="max-w-3xl mx-auto space-y-5">
-      <PrintHeader
-        title="지점장 일일보고"
-        subtitle={`${selectedBranch?.name ?? ""} / ${today}`}
-      />
-
-      {/* Top bar */}
-      <div className="flex items-center justify-between gap-2 flex-wrap">
+    <div className="mx-auto max-w-3xl space-y-5">
+      <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <p className="text-lg font-bold text-gray-900">
-            {profile?.name ?? "사용자"}님, 오늘도 화이팅입니다!
-          </p>
+          <p className="text-lg font-bold text-gray-900">{profile.name}님, 오늘도 화이팅입니다!</p>
           <p className="text-xs text-gray-400">{formatDate(today)} 기준</p>
         </div>
-        <PrintButton />
         {branches.length > 1 && (
           <select
-            value={selectedBranchId}
-            onChange={(e) => {
-              const newId = e.target.value;
-              setLoading(true);
-              setTodayReport(undefined);
-              setYesterdayReport(null);
-              setRecentReports([]);
-              setActivePromotions([]);
-              setIssues([]);
-              setLoadError(null);
-              setSelectedBranchId(newId);
-              if (profile) localStorage.setItem(`returnlife_branch_${profile.uid}`, newId);
-            }}
-            className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
+            value={branchId}
+            onChange={(e) => setBranchId(e.target.value)}
+            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
           >
             {branches.map((b) => (
-              <option key={b.id} value={b.id}>{b.name}</option>
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
             ))}
           </select>
         )}
       </div>
 
-      {/* Today status */}
-      <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-xs text-gray-500 mb-1">오늘 보고 상태</p>
-            {reportStatus ? (
-              <ReportStatusBadge status={reportStatus} />
-            ) : (
-              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">미작성</span>
-            )}
-            {reportStatus === "revision_required" && (
-              <p className="text-xs text-orange-600 mt-1">수정 요청이 있습니다.</p>
-            )}
-            {isTodayReportAbnormal && (
-              <p className="text-xs text-amber-600 mt-1">제출 기록은 있으나 주요 데이터가 비어 있습니다.</p>
-            )}
-          </div>
-          <div className="text-right">
-            <p className="text-xs text-gray-400">오늘 날짜</p>
-            <p className="font-bold text-gray-800">{formatDate(today)}</p>
-            {selectedBranch && <p className="text-xs text-gray-400 mt-0.5">{selectedBranch.name}</p>}
-          </div>
-        </div>
-        {!isTodayReportAbnormal && (!reportStatus || reportStatus === "draft" || reportStatus === "revision_required") && (
-          <Link
-            href={`/manager/report/new?branchId=${selectedBranchId}&date=${today}`}
-            className="mt-3 flex items-center justify-center gap-2 w-full py-2.5 bg-red-600 text-white rounded-lg text-sm font-semibold hover:bg-red-700 transition-colors"
-          >
-            <PlusCircleIcon className="w-4 h-4" />
-            오늘 보고 작성하기
-          </Link>
-        )}
-        {isTodayReportAbnormal && (
-          <button
-            type="button"
-            onClick={handleRewriteAbnormalReport}
-            disabled={rewriteLoading}
-            className="mt-2 flex items-center justify-center gap-2 w-full py-2.5 bg-amber-600 text-white rounded-lg text-sm font-semibold hover:bg-amber-700 transition-colors disabled:opacity-50"
-          >
-            {rewriteLoading ? "준비 중..." : "보고 다시 작성하기"}
-          </button>
-        )}
-      </div>
+      <ShiftNotice />
 
-      {/* KPI Grid */}
-      {todayReport && !isTodayReportAbnormal && (
-        <div>
-          <p className="text-sm font-semibold text-gray-700 mb-2">오늘 주요 지표</p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            <KpiCard
-              label="유효회원"
-              value={todayReport.activeMembers ?? "-"}
-              unit="명"
-              subLabel={yesterdayReport ? `전일 ${yesterdayReport.activeMembers ?? "-"}명` : "전일 데이터 없음"}
-              change={diffLabel(todayReport.activeMembers, yesterdayReport?.activeMembers ?? null)}
-              changePositive={(todayReport.activeMembers ?? 0) >= (yesterdayReport?.activeMembers ?? 0)}
-            />
-            <KpiCard label="문의수" value={todayReport.inquiries ?? "-"} unit="건" />
-            <KpiCard label="PT 상담" value={todayReport.ptConsultations ?? "-"} unit="건" />
-            <KpiCard label="PT 등록" value={todayReport.ptRegistrations ?? "-"} unit="건" />
-            <KpiCard label="PT 전환율" value={formatPercent(convRate)} />
-            <KpiCard label="재등록" value={todayReport.reRegistrations ?? "-"} unit="명" />
-            <KpiCard label="컴백회원" value={todayReport.comebackMembers ?? "-"} unit="명" />
-            <KpiCard label="해피콜" value={todayReport.happyCalls ?? "-"} unit="건" />
-          </div>
-        </div>
-      )}
+      <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <p className="mb-3 text-sm font-semibold text-gray-700">오늘 보고 현황</p>
 
-      {/* Trend chart */}
-      {trendData.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-          <p className="text-sm font-semibold text-gray-700 mb-3">최근 7일 유효회원 추이</p>
-          <TrendChart data={trendData} />
-        </div>
-      )}
-
-      {/* Recent reports */}
-      <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-        <div className="flex items-center justify-between mb-3">
-          <p className="text-sm font-semibold text-gray-700">최근 보고 내역</p>
-          <Link href="/manager/reports" className="text-xs text-red-600 hover:underline">전체보기</Link>
-        </div>
-        {recentReports.length === 0 ? (
-          <p className="text-sm text-gray-400 text-center py-4">보고 내역이 없습니다.</p>
+        {loading ? (
+          <LoadingState />
         ) : (
           <div className="space-y-2">
-            {recentReports.slice(0, 5).map((r) => (
-              <Link
-                key={r.id}
-                href={`/manager/reports/${r.id}`}
-                className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0 hover:bg-gray-50 -mx-1 px-1 rounded"
-              >
-                <span className="text-sm text-gray-700">{formatDate(r.reportDate)}</span>
-                <ReportStatusBadge status={r.status} />
-              </Link>
-            ))}
+            {SHIFT_TYPES.map((shift) => {
+              const report = reports[shift];
+              const state = resolveSubmissionState(report, today, shift);
+              return (
+                <div
+                  key={shift}
+                  className="flex items-center justify-between gap-3 border-b border-gray-100 py-2 last:border-0"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">{SHIFT_LABEL[shift]}</p>
+                    <p className="text-xs text-gray-400">
+                      기한 {SHIFT_DEADLINE[shift]}
+                      {report?.submittedAt &&
+                        ` · 제출 ${formatDateTime(report.submittedAt.toDate())}`}
+                    </p>
+                  </div>
+                  <ShiftStateBadge state={state} />
+                </div>
+              );
+            })}
           </div>
         )}
+
+        <Link
+          href="/manager/shift-reports"
+          className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-red-600 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-red-700"
+        >
+          <ClipboardListIcon className="h-4 w-4" />
+          지점별 일일보고 작성하기
+        </Link>
       </div>
-
-      {/* 진행 중 프로모션 — 오늘 기준 담당 지점의 active 프로모션 */}
-      {activePromotions.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-sm font-semibold text-gray-700">진행 중 프로모션</p>
-            <Link href="/manager/promotions" className="text-xs text-red-600 hover:underline">
-              프로모션 관리
-            </Link>
-          </div>
-          <div className="space-y-2">
-            {activePromotions.map((p) => (
-              <div key={p.id} className="text-sm">
-                <p className="font-medium text-gray-800">{p.name}</p>
-                <p className="text-xs text-gray-400">기간: {formatDate(p.startDate)} ~ {formatDate(p.endDate)}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Open issues */}
-      {issues.length > 0 && (
-        <div className="bg-white rounded-xl border border-red-100 p-4 shadow-sm">
-          <div className="flex items-center gap-2 mb-3">
-            <AlertCircleIcon className="w-4 h-4 text-red-500" />
-            <p className="text-sm font-semibold text-gray-700">미해결 운영 이슈 ({issues.length}건)</p>
-          </div>
-          {issues.slice(0, 3).map((iss) => (
-            <div key={iss.id} className="text-xs text-gray-600 py-1 border-b border-gray-100 last:border-0">
-              <span className="font-medium">[{iss.type === "claim" ? "클레임" : iss.type === "staff" ? "인력" : "시설"}]</span>{" "}
-              {iss.description}
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

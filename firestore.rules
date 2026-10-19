@@ -516,6 +516,87 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    // ─── branchShiftReports (지점별 일일보고 — 오전/마감) ──────────────────────
+    // Doc ID: {branchId}_{reportDate}_{shift}
+    //   → 같은 지점·날짜·보고 유형의 문서가 하나뿐이라 중복 제출이 구조적으로 불가능하다.
+    // 작성: 담당 지점의 branch_manager (오늘/전일 KST 만).
+    // 조회: admin 전 지점, branch_manager 담당 지점.
+    //
+    // 정시/지연은 저장하지 않고 submittedAt 과 기한을 비교해 조회 시 계산한다.
+    // 그래서 submittedAt 을 클라이언트가 임의 시각으로 쓰지 못하게 request.time 과
+    // 일치하는지 검사한다 (serverTimestamp 로 쓰면 자동으로 일치한다).
+    function validShiftReportData(shiftReportId, data) {
+      return data.keys().hasOnly([
+          'id', 'branchId', 'branchName', 'reportDate', 'shift', 'content', 'status',
+          'writerUid', 'writerName', 'submittedAt', 'editCount', 'edits',
+          'createdAt', 'updatedAt'
+        ])
+        && data.id == shiftReportId
+        && data.branchId is string && data.branchId.size() > 0
+        && data.branchName is string
+        && data.reportDate is string && data.reportDate.size() == 10
+        && data.shift in ['morning', 'closing']
+        && shiftReportId == data.branchId + '_' + data.reportDate + '_' + data.shift
+        && data.content is string && data.content.size() <= 5000
+        && data.status in ['draft', 'submitted']
+        && data.writerUid is string && data.writerUid.size() > 0
+        && data.writerName is string
+        && data.editCount is int && data.editCount >= 0
+        && data.edits is list && data.edits.size() <= 20
+        && !('password' in data);
+    }
+
+    // submittedAt 은 서버 시각(serverTimestamp)으로만 기록할 수 있다 — 제출 시각 위조 차단
+    function shiftSubmittedAtIsServerTime(data) {
+      return !('submittedAt' in data.keys()) || data.submittedAt == request.time;
+    }
+
+    match /branchShiftReports/{shiftReportId} {
+      allow get: if isAdmin() ||
+        (isActiveManager()
+          && (!exists(/databases/$(database)/documents/branchShiftReports/$(shiftReportId))
+            || resource.data.branchId in getUserData().branchIds));
+
+      allow list: if isAdmin() ||
+        (isActiveManager() && resource.data.branchId in getUserData().branchIds);
+
+      allow create: if validShiftReportData(shiftReportId, request.resource.data)
+        && request.resource.data.editCount == 0
+        && request.resource.data.edits.size() == 0
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && shiftSubmittedAtIsServerTime(request.resource.data)
+        && (request.resource.data.status != 'submitted'
+          || request.resource.data.submittedAt == request.time)
+        && (isAdmin() ||
+          (isActiveManager()
+            && request.resource.data.branchId in getUserData().branchIds
+            && request.resource.data.writerUid == uid()
+            && isWithinManagerReportDateRange(request.resource.data.reportDate)));
+
+      // 지점·날짜·보고 유형·최초 작성 시각은 생성 이후 바뀌지 않는다.
+      // 제출된 보고를 임시저장으로 되돌릴 수 없고, 수정 횟수는 줄어들 수 없다.
+      allow update: if validShiftReportData(shiftReportId, request.resource.data)
+        && request.resource.data.branchId == resource.data.branchId
+        && request.resource.data.reportDate == resource.data.reportDate
+        && request.resource.data.shift == resource.data.shift
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.editCount >= resource.data.editCount
+        && !(resource.data.status == 'submitted' && request.resource.data.status == 'draft')
+        && (!('submittedAt' in resource.data.keys())
+          ? shiftSubmittedAtIsServerTime(request.resource.data)
+          : request.resource.data.submittedAt == resource.data.submittedAt)
+        // 원 작성자는 바뀌지 않는다 — 누가 고쳤는지는 edits 이력으로만 남긴다
+        && request.resource.data.writerUid == resource.data.writerUid
+        && (isAdmin() ||
+          (isActiveManager()
+            && resource.data.branchId in getUserData().branchIds
+            && isWithinManagerReportDateRange(resource.data.reportDate)));
+
+      allow delete: if isAdmin();
+    }
+
     // ─── auditLogs ────────────────────────────────────────────────────────
     match /auditLogs/{logId} {
       allow read: if isAdmin();

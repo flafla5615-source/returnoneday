@@ -12,10 +12,10 @@ import {
   BuildingIcon,
   MegaphoneIcon,
   DownloadIcon,
-  FileTextIcon,
   LogOutIcon,
   DumbbellIcon,
   TrendingUpIcon,
+  CalendarCheckIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -34,16 +34,11 @@ function isNavActive(pathname: string, href: string, exact?: boolean): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
+// 1단계 개편: 지점장은 홈 / 지점별 일일보고 / 로그아웃(하단 고정)만 사용한다.
+// 숨긴 화면의 코드와 데이터는 그대로 두고, 접근 차단은 app/manager/layout.tsx 에서 처리한다.
 const managerNav: NavItem[] = [
   { label: "홈", href: "/manager", icon: <HomeIcon className="w-4 h-4" />, exact: true },
-  { label: "일일보고 작성", href: "/manager/report/new", icon: <ClipboardListIcon className="w-4 h-4" /> },
-  { label: "보고 내역", href: "/manager/reports", icon: <FileTextIcon className="w-4 h-4" /> },
-  { label: "대시보드", href: "/manager/dashboard", icon: <BarChart2Icon className="w-4 h-4" /> },
-  { label: "회원관리", href: "/manager/members", icon: <UsersIcon className="w-4 h-4" /> },
-  { label: "운영 이슈", href: "/manager/issues", icon: <AlertCircleIcon className="w-4 h-4" /> },
-  { label: "프로모션 관리", href: "/manager/promotions", icon: <MegaphoneIcon className="w-4 h-4" /> },
-  { label: "트레이너 실적", href: "/manager/trainers", icon: <DumbbellIcon className="w-4 h-4" /> },
-  { label: "설정", href: "/manager/settings", icon: <SettingsIcon className="w-4 h-4" /> },
+  { label: "지점별 일일보고", href: "/manager/shift-reports", icon: <ClipboardListIcon className="w-4 h-4" /> },
 ];
 
 const adminNav: NavItem[] = [
@@ -51,6 +46,7 @@ const adminNav: NavItem[] = [
   { label: "통합 KPI", href: "/admin/kpi", icon: <TrendingUpIcon className="w-4 h-4" /> },
   { label: "지점 내역", href: "/admin/branches", icon: <BuildingIcon className="w-4 h-4" /> },
   { label: "보고 관리", href: "/admin/reports", icon: <ClipboardListIcon className="w-4 h-4" /> },
+  { label: "지점별 일일보고", href: "/admin/shift-reports", icon: <CalendarCheckIcon className="w-4 h-4" /> },
   { label: "운영 이슈", href: "/admin/issues", icon: <AlertCircleIcon className="w-4 h-4" /> },
   { label: "프로모션 관리", href: "/admin/promotions", icon: <MegaphoneIcon className="w-4 h-4" /> },
   { label: "회원관리", href: "/admin/members", icon: <UsersIcon className="w-4 h-4" /> },
