@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { getAllBranches } from "@/services/branches";
-import { getShiftReportsInRange, resolveSubmissionState } from "@/services/shiftReports";
+import { getShiftReportsInRange } from "@/services/shiftReports";
+import { describeSubmission, resolveSubmissionState, weekdayLabel } from "@/lib/shiftSchedule";
 import { ShiftStateBadge } from "@/components/common/StatusBadge";
 import LoadingState from "@/components/common/LoadingState";
 import {
@@ -203,7 +204,9 @@ export default function AdminShiftReportsPage() {
           ))}
         </select>
 
-        <span className="text-xs text-gray-400">{formatDate(date)}</span>
+        <span className="text-xs text-gray-400">
+          {formatDate(date)} ({weekdayLabel(date)})
+        </span>
       </div>
 
       {error && (
@@ -267,6 +270,7 @@ export default function AdminShiftReportsPage() {
                                 key={shift}
                                 shift={shift}
                                 report={row.reports[shift]}
+                                reportDate={date}
                               />
                             ))}
                           </div>
@@ -278,11 +282,22 @@ export default function AdminShiftReportsPage() {
                         return (
                           <td key={shift} className="px-4 py-3">
                             <ShiftStateBadge state={row.states[shift]} />
-                            {report?.submittedAt && (
-                              <p className="mt-1 text-xs text-gray-400">
-                                {formatDateTime(report.submittedAt.toDate())}
-                              </p>
-                            )}
+                            {(() => {
+                              const info = describeSubmission(report, date, shift);
+                              if (!info.submittedAt) return null;
+                              return (
+                                <>
+                                  <p className="mt-1 text-xs text-gray-400">
+                                    제출 {formatDateTime(info.submittedAt)}
+                                  </p>
+                                  {info.backdated && (
+                                    <p className="mt-0.5 text-[11px] text-amber-600">
+                                      소급 작성 ({info.daysAfterReportDate}일 뒤)
+                                    </p>
+                                  )}
+                                </>
+                              );
+                            })()}
                             {!!report?.editCount && (
                               <p className="mt-0.5 flex items-center gap-1 text-xs text-gray-400">
                                 <HistoryIcon className="h-3 w-3" />
@@ -291,7 +306,7 @@ export default function AdminShiftReportsPage() {
                             )}
                             {isOpen && (
                               <div className="mt-2 hidden md:block">
-                                <ShiftDetail shift={shift} report={report} hideTitle />
+                                <ShiftDetail shift={shift} report={report} reportDate={date} hideTitle />
                               </div>
                             )}
                           </td>
@@ -324,10 +339,12 @@ export default function AdminShiftReportsPage() {
 function ShiftDetail({
   shift,
   report,
+  reportDate,
   hideTitle,
 }: {
   shift: ShiftType;
   report: BranchShiftReport | null;
+  reportDate: string;
   hideTitle?: boolean;
 }) {
   const [showHistory, setShowHistory] = useState(false);
@@ -349,7 +366,19 @@ function ShiftDetail({
       <p className="whitespace-pre-wrap text-xs leading-relaxed text-gray-700">
         {report.content || "(내용 없음)"}
       </p>
-      <p className="mt-2 text-[11px] text-gray-400">작성자 {report.writerName}</p>
+      {(() => {
+        const info = describeSubmission(report, reportDate, shift);
+        return (
+          <p className="mt-2 text-[11px] text-gray-400">
+            보고일 {formatDate(report.reportDate)}
+            {info.submittedAt
+              ? ` · 최초 제출 ${formatDateTime(info.submittedAt)}`
+              : " · 임시저장 (미제출)"}
+            {info.backdated && ` · ${info.daysAfterReportDate}일 뒤 소급 작성`}
+            {` · 작성자 ${report.writerName}`}
+          </p>
+        );
+      })()}
 
       {report.editCount > 0 && (
         <>
