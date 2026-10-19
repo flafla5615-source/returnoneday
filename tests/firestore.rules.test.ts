@@ -466,3 +466,202 @@ describe("admin access", () => {
     );
   });
 });
+
+/* ── branchShiftReports (지점별 일일보고 — 오전/마감) ────────────────────────
+   2단계에서 지점장 계정을 지점별로 배정하므로, 담당 지점 외 접근이 실제로
+   막히는지 규칙 수준에서 확인한다.                                           */
+
+function shiftId(branchId: string, date: string, shift: "morning" | "closing") {
+  return `${branchId}_${date}_${shift}`;
+}
+
+function shiftPayload(
+  branchId: string,
+  date: string,
+  shift: "morning" | "closing",
+  writerUid: string,
+  overrides: Record<string, unknown> = {}
+) {
+  return {
+    id: shiftId(branchId, date, shift),
+    branchId,
+    branchName: "테스트 지점",
+    reportDate: date,
+    shift,
+    content: "오늘 특이사항 없습니다.",
+    status: "draft",
+    writerUid,
+    writerName: "테스트 지점",
+    editCount: 0,
+    edits: [],
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    ...overrides,
+  };
+}
+
+describe("branch shift reports — 담당 지점만 작성·조회", () => {
+  test("담당 지점의 오전·마감 보고를 작성할 수 있다", async () => {
+    const db = authedDb(MANAGER_UID);
+    const today = getKoreaToday();
+
+    await assertSucceeds(
+      setDoc(
+        doc(db, "branchShiftReports", shiftId(BRANCH_ID, today, "morning")),
+        shiftPayload(BRANCH_ID, today, "morning", MANAGER_UID)
+      )
+    );
+    await assertSucceeds(
+      setDoc(
+        doc(db, "branchShiftReports", shiftId(BRANCH_ID, today, "closing")),
+        shiftPayload(BRANCH_ID, today, "closing", MANAGER_UID, {
+          status: "submitted",
+          submittedAt: serverTimestamp(),
+        })
+      )
+    );
+  });
+
+  test("타 지점 보고는 작성할 수 없다", async () => {
+    const db = authedDb(MANAGER_UID);
+    const today = getKoreaToday();
+
+    await assertFails(
+      setDoc(
+        doc(db, "branchShiftReports", shiftId(OTHER_BRANCH_ID, today, "morning")),
+        shiftPayload(OTHER_BRANCH_ID, today, "morning", MANAGER_UID)
+      )
+    );
+  });
+
+  test("타 지점 보고는 조회할 수 없다 (단건·목록 모두)", async () => {
+    const today = getKoreaToday();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(
+        doc(ctx.firestore(), "branchShiftReports", shiftId(OTHER_BRANCH_ID, today, "morning")),
+        shiftPayload(OTHER_BRANCH_ID, today, "morning", OTHER_MANAGER_UID)
+      );
+    });
+
+    const db = authedDb(MANAGER_UID);
+    await assertFails(
+      getDoc(doc(db, "branchShiftReports", shiftId(OTHER_BRANCH_ID, today, "morning")))
+    );
+    await assertFails(
+      getDocs(
+        query(collection(db, "branchShiftReports"), where("branchId", "==", OTHER_BRANCH_ID))
+      )
+    );
+    await assertSucceeds(
+      getDocs(query(collection(db, "branchShiftReports"), where("branchId", "==", BRANCH_ID)))
+    );
+  });
+
+  test("타 지점 보고를 수정하거나 자기 지점으로 옮길 수 없다", async () => {
+    const today = getKoreaToday();
+    const db = authedDb(MANAGER_UID);
+
+    await assertFails(
+      updateDoc(
+        doc(db, "branchShiftReports", shiftId(OTHER_BRANCH_ID, today, "morning")),
+        { content: "남의 지점 보고 수정 시도", updatedAt: serverTimestamp() }
+      )
+    );
+    // 지점 재귀속 차단: branchId 를 자기 지점으로 바꾸는 것도 막혀야 한다
+    await assertFails(
+      updateDoc(
+        doc(db, "branchShiftReports", shiftId(OTHER_BRANCH_ID, today, "morning")),
+        { branchId: BRANCH_ID, updatedAt: serverTimestamp() }
+      )
+    );
+  });
+
+  test("과거 보고일은 소급 작성할 수 있고 미래 보고일은 막힌다", async () => {
+    const db = authedDb(MANAGER_UID);
+    const past = "2026-01-05";
+    const future = "2099-01-01";
+
+    await assertSucceeds(
+      setDoc(
+        doc(db, "branchShiftReports", shiftId(BRANCH_ID, past, "morning")),
+        shiftPayload(BRANCH_ID, past, "morning", MANAGER_UID)
+      )
+    );
+    await assertFails(
+      setDoc(
+        doc(db, "branchShiftReports", shiftId(BRANCH_ID, future, "morning")),
+        shiftPayload(BRANCH_ID, future, "morning", MANAGER_UID)
+      )
+    );
+  });
+
+  test("문서 ID가 지점·날짜·유형과 어긋나면 거부된다 (중복/위조 방지)", async () => {
+    const db = authedDb(MANAGER_UID);
+    const today = getKoreaToday();
+
+    await assertFails(
+      setDoc(
+        doc(db, "branchShiftReports", `${BRANCH_ID}_${today}_morning_2`),
+        shiftPayload(BRANCH_ID, today, "morning", MANAGER_UID, {
+          id: `${BRANCH_ID}_${today}_morning_2`,
+        })
+      )
+    );
+  });
+
+  test("제출 시각은 서버 시각으로만 기록된다 (정시 위조 차단)", async () => {
+    const db = authedDb(MANAGER_UID);
+    const yesterday = getKoreaYesterday();
+
+    await assertFails(
+      setDoc(
+        doc(db, "branchShiftReports", shiftId(BRANCH_ID, yesterday, "closing")),
+        shiftPayload(BRANCH_ID, yesterday, "closing", MANAGER_UID, {
+          status: "submitted",
+          // 기한 안에 낸 것처럼 보이게 만든 임의 시각
+          submittedAt: new Date("2026-01-01T00:00:00Z"),
+        })
+      )
+    );
+  });
+
+  test("다지점 담당자는 배정된 모든 지점에 쓸 수 있다", async () => {
+    const db = authedDb(MULTI_MANAGER_UID);
+    const today = getKoreaToday();
+
+    await assertSucceeds(
+      setDoc(
+        doc(db, "branchShiftReports", shiftId(OTHER_BRANCH_ID, today, "closing")),
+        shiftPayload(OTHER_BRANCH_ID, today, "closing", MULTI_MANAGER_UID)
+      )
+    );
+  });
+
+  test("본사(admin)는 전 지점 보고를 조회할 수 있다", async () => {
+    const db = authedDb(ADMIN_UID);
+    const today = getKoreaToday();
+
+    await assertSucceeds(
+      getDoc(doc(db, "branchShiftReports", shiftId(BRANCH_ID, today, "morning")))
+    );
+    await assertSucceeds(
+      getDoc(doc(db, "branchShiftReports", shiftId(OTHER_BRANCH_ID, today, "morning")))
+    );
+    await assertSucceeds(getDocs(collection(db, "branchShiftReports")));
+  });
+
+  test("로그인하지 않으면 접근할 수 없다", async () => {
+    const db = unauthDb();
+    const today = getKoreaToday();
+
+    await assertFails(
+      getDoc(doc(db, "branchShiftReports", shiftId(BRANCH_ID, today, "morning")))
+    );
+    await assertFails(
+      setDoc(
+        doc(db, "branchShiftReports", shiftId(BRANCH_ID, today, "morning")),
+        shiftPayload(BRANCH_ID, today, "morning", "anonymous")
+      )
+    );
+  });
+});

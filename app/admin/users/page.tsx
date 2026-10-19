@@ -26,6 +26,7 @@ import {
   KeyRoundIcon,
   LockIcon,
 } from "lucide-react";
+import { defaultEmailFor } from "@/lib/branchAccountEmail";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -33,19 +34,10 @@ import {
 // 지점장이 바뀌어도 계정은 지점에 귀속되어 유지된다.
 // 계정 목록은 branches 컬렉션에서 런타임에 생성 — operationalAccounts 참조.
 
-const HQ_BRANCHES = ["머팩 벌리점", "머팩 보건대점", "머팩 신진주역점", "짐플릭스 시청점"];
-
-const EMAIL_DOMAIN = "returnlife.co.kr";
-
-// branchId 기반 이메일 생성 — 이메일에 쓸 수 없는 문자는 하이픈으로 변환
-function branchEmailOf(branchId: string): string {
-  const local = branchId
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^[-.]+|[-.]+$/g, "");
-  return `${local}@${EMAIL_DOMAIN}`;
-}
+// 본사가 직접 관리해 운영계정을 만들지 않는 지점.
+// 2단계에서 벌리·보건대·신진주역·시청에 지점장 계정을 배정하면서 비웠다.
+// 앞으로 본사 직영 지점이 생기면 지점명을 여기에 넣으면 목록에서 제외된다.
+const HQ_BRANCHES: string[] = [];
 
 type OperationalAccount = {
   key: string;          // branch.id — managerInvites 문서 키
@@ -53,7 +45,7 @@ type OperationalAccount = {
   name: string;         // 지점명 (users.name으로 저장될 값)
   brand: string;
   branches: string[];   // 담당 지점명 (기본 1개)
-  defaultEmail: string; // {branchId}@returnlife.co.kr
+  defaultEmail: string; // 지정 아이디가 있으면 그 주소, 없으면 {branchId}@returnlife.co.kr
 };
 
 const STATUS_LABEL: Record<ManagerInviteStatus, string> = {
@@ -191,7 +183,7 @@ export default function AdminUsersPage() {
           name: b.name,
           brand: b.brand,
           branches: [b.name],
-          defaultEmail: branchEmailOf(b.id),
+          defaultEmail: defaultEmailFor(b.name, b.id),
         })),
     [branches]
   );
@@ -456,6 +448,7 @@ export default function AdminUsersPage() {
         const current = invites[acc.key]?.email?.trim() ?? "";
         if (current) continue;
         const email = acc.defaultEmail;
+        if (!email) continue; // 기본 이메일을 만들 수 없는 지점 — 관리자가 직접 입력
         if (emailToUser[email]) continue; // 기존 계정과 충돌하면 건너뜀
         const status = deriveStatus(email, undefined);
         await upsertManagerInvite(acc.key, {
@@ -919,25 +912,34 @@ export default function AdminUsersPage() {
             </table>
           </div>
 
-          {/* HQ branches notice */}
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-            <h3 className="text-sm font-semibold text-blue-900 mb-2 flex items-center gap-2">
-              <BuildingIcon className="w-4 h-4" />
-              본사 직접 관리 지점 — 별도 지점장 계정 미생성
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {HQ_BRANCHES.map((n) => (
-                <span key={n} className="px-2.5 py-1 bg-blue-100 text-blue-700 rounded-lg text-xs font-medium">
-                  {n}
-                </span>
-              ))}
+          {/* HQ branches notice — 본사 직영 지점이 있을 때만 표시 */}
+          {HQ_BRANCHES.length > 0 && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+              <h3 className="text-sm font-semibold text-blue-900 mb-2 flex items-center gap-2">
+                <BuildingIcon className="w-4 h-4" />
+                본사 직접 관리 지점 — 별도 지점장 계정 미생성
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                {HQ_BRANCHES.map((n) => (
+                  <span key={n} className="px-2.5 py-1 bg-blue-100 text-blue-700 rounded-lg text-xs font-medium">
+                    {n}
+                  </span>
+                ))}
+              </div>
+              <p className="text-xs text-blue-600 mt-2">
+                위 지점은 admin 계정에서 직접 보고 관리를 수행합니다.
+              </p>
             </div>
-            <p className="text-xs text-blue-600 mt-2">
-              위 지점은 admin 계정에서 직접 보고 관리를 수행합니다.
-            </p>
-            <p className="text-xs text-blue-600 mt-1">
+          )}
+
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+            <p className="text-xs text-blue-600">
               비밀번호는 코드·Firestore에 저장하지 않습니다. 초기 비밀번호 방식은 생성 시에만
               Firebase Auth로 전달하고, 재설정 메일 방식은 실제 수신 가능한 이메일이 필요합니다.
+            </p>
+            <p className="text-xs text-blue-600 mt-1">
+              이미 배정된 비밀번호를 쓰려면, 계정을 만든 뒤 아래 &ldquo;기존 Firebase 계정&rdquo;
+              탭에서 지점별로 비밀번호를 직접 입력해 설정하세요.
             </p>
           </div>
         </div>
