@@ -454,6 +454,77 @@ describe("admin access", () => {
     );
   });
 
+  test("admins can create a branch_manager profile for an existing Auth uid", async () => {
+    const db = authedDb(ADMIN_UID);
+    const newUid = "auth_console_created_001";
+
+    await assertSucceeds(
+      setDoc(doc(db, "users", newUid), {
+        uid: newUid,
+        name: "머팩 벌리점",
+        email: "beolli@returnlife.co.kr",
+        role: "branch_manager",
+        status: "active",
+        active: true,
+        branchIds: [BRANCH_ID],
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    );
+  });
+
+  test("admins cannot mint an admin account through the link path", async () => {
+    const db = authedDb(ADMIN_UID);
+    const newUid = "auth_console_created_002";
+
+    await assertFails(
+      setDoc(doc(db, "users", newUid), {
+        uid: newUid,
+        name: "가짜 관리자",
+        email: "fake@returnlife.co.kr",
+        role: "admin",
+        status: "active",
+        active: true,
+        branchIds: [],
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    );
+
+    // uid 가 문서 ID 와 다르면 거부된다
+    await assertFails(
+      setDoc(doc(db, "users", "auth_console_created_003"), {
+        uid: "someone_else",
+        name: "불일치",
+        email: "x@returnlife.co.kr",
+        role: "branch_manager",
+        status: "active",
+        active: true,
+        branchIds: [],
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    );
+  });
+
+  test("managers still cannot create profiles for other uids", async () => {
+    const db = authedDb(MANAGER_UID);
+
+    await assertFails(
+      setDoc(doc(db, "users", "someone_else_999"), {
+        uid: "someone_else_999",
+        name: "머팩 벌리점",
+        email: "beolli@returnlife.co.kr",
+        role: "branch_manager",
+        status: "active",
+        active: true,
+        branchIds: [BRANCH_ID],
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    );
+  });
+
   test("admins can approve users and assign branches", async () => {
     const db = authedDb(ADMIN_UID);
 

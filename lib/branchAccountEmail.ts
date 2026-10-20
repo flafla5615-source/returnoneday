@@ -21,7 +21,8 @@ export const BRANCH_EMAIL_OVERRIDES: { keyword: string; email: string }[] = [
   { keyword: "벌리", email: `beolli@${EMAIL_DOMAIN}` },
   { keyword: "보건대", email: `bogeondae@${EMAIL_DOMAIN}` },
   { keyword: "신진주역", email: `sinjinju@${EMAIL_DOMAIN}` },
-  { keyword: "시청", email: `sicheong@${EMAIL_DOMAIN}` },
+  // 시청점은 실제 발급된 계정이 브랜드명(gymflix) 기준이다 — 2026-10-20 확인
+  { keyword: "시청", email: `gymflix@${EMAIL_DOMAIN}` },
 ];
 
 /**

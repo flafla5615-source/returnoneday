@@ -245,8 +245,31 @@ service cloud.firestore {
               .hasAny(['role', 'status', 'active', 'branchIds'])
           && !('password' in request.resource.data));
 
-      // New user creates own document on signup — must be branch_manager/pending
-      allow create: if isAuth() && uid() == userId
+      // 관리자가 "이미 존재하는 Firebase Auth 계정"을 Firestore 프로필에 연결하는 경로.
+      // Auth 콘솔에서 만든 계정은 users 문서가 없는데, 아래 자가 가입 규칙은
+      // uid() == userId 를 요구해서 관리자가 대신 만들어 줄 수 없었다.
+      //
+      // 이 경로로는 branch_manager 프로필만 만들 수 있다 — role 을 admin 으로
+      // 고정 검사하므로 이 규칙으로 관리자 계정을 새로 만들어내는 것은 불가능하다.
+      // (관리자는 기존 update 규칙으로 이미 모든 users 문서를 고칠 수 있으므로
+      //  권한이 넓어지는 변화는 아니고, create 쪽이 오히려 더 좁다.)
+      function validAdminLinkedProfile(userId, data) {
+        return data.keys().hasOnly([
+            'uid', 'name', 'email', 'role', 'status', 'active', 'branchIds',
+            'createdAt', 'updatedAt'
+          ])
+          && data.uid == userId
+          && data.role == 'branch_manager'
+          && data.status in ['pending', 'active']
+          && data.name is string && data.name.size() > 0
+          && data.email is string && data.email.size() > 0
+          && data.branchIds is list
+          && !('password' in data);
+      }
+
+      allow create: if (isAdmin() && validAdminLinkedProfile(userId, request.resource.data)) ||
+        // New user creates own document on signup — must be branch_manager/pending
+        (isAuth() && uid() == userId
         && request.resource.data.keys().hasOnly([
           'uid', 'name', 'email', 'role', 'status', 'active', 'branchIds',
           'createdAt', 'updatedAt'
@@ -256,7 +279,7 @@ service cloud.firestore {
         && request.resource.data.status == 'pending'
         && request.resource.data.branchIds is list
         && request.resource.data.branchIds.size() == 0
-        && !('password' in request.resource.data);
+        && !('password' in request.resource.data));
 
       allow delete: if isAdmin();
     }

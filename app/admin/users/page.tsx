@@ -25,8 +25,10 @@ import {
   BuildingIcon,
   KeyRoundIcon,
   LockIcon,
+  LinkIcon,
 } from "lucide-react";
 import { defaultEmailFor } from "@/lib/branchAccountEmail";
+import { linkExistingAuthAccount } from "@/services/users";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -145,6 +147,15 @@ export default function AdminUsersPage() {
   const [editRole, setEditRole] = useState<UserRole>("branch_manager");
   const [editStatus, setEditStatus] = useState<UserStatus>("pending");
   const [editBranchIds, setEditBranchIds] = useState<string[]>([]);
+
+  // 기존 Auth 계정 연결 폼
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkUid, setLinkUid] = useState("");
+  const [linkEmail, setLinkEmail] = useState("");
+  const [linkBranchId, setLinkBranchId] = useState("");
+  const [linkSaving, setLinkSaving] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const [linkNotice, setLinkNotice] = useState<string | null>(null);
   const [editSaving, setEditSaving] = useState(false);
 
   // Branch account password reset (admin 전용)
@@ -475,6 +486,60 @@ export default function AdminUsersPage() {
     setEditRole(u.role);
     setEditStatus(u.status);
     setEditBranchIds(u.branchIds ?? []);
+  }
+
+  // Auth 콘솔에서 만든 계정을 UID 로 Firestore 프로필에 연결한다.
+  // 지점은 이름으로 고르고, 해당 지점 하나에만 연결된다.
+  async function handleLinkExistingAccount() {
+    const branch = branches.find((b) => b.id === linkBranchId);
+    if (!branch) {
+      setLinkError("지점을 선택해주세요.");
+      return;
+    }
+    setLinkSaving(true);
+    setLinkError(null);
+    setLinkNotice(null);
+    try {
+      const result = await linkExistingAuthAccount({
+        uid: linkUid,
+        email: linkEmail,
+        name: branch.name,
+        branchId: branch.id,
+      });
+      const parts = [
+        result.createdProfile ? "프로필을 새로 만들었습니다" : "기존 프로필을 갱신했습니다",
+        result.addedToBranch ? `${branch.name} 담당자로 추가했습니다` : `이미 ${branch.name} 담당자였습니다`,
+      ];
+      if (result.removedFromBranchIds.length > 0) {
+        const names = result.removedFromBranchIds
+          .map((id) => branches.find((b) => b.id === id)?.name ?? id)
+          .join(", ");
+        parts.push(`이전 담당 지점(${names}) 연결은 해제했습니다`);
+      }
+      setLinkNotice(`${branch.name}: ${parts.join(" · ")}.`);
+      setLinkUid("");
+      setLinkEmail("");
+      setLinkBranchId("");
+      await refreshUserData();
+    } catch (error) {
+      console.error("[AdminUsers] link existing account failed", error);
+      const code = (error as { code?: string })?.code ?? (error as Error)?.message ?? "unknown";
+      setLinkError(
+        code === "target-is-admin"
+          ? "해당 UID 는 관리자 계정입니다. 운영계정으로 연결할 수 없습니다."
+          : code === "branch-not-found"
+            ? "지점을 찾을 수 없습니다."
+            : code === "email-invalid"
+              ? "이메일 형식을 확인해주세요."
+              : code === "uid-required"
+                ? "UID 를 입력해주세요."
+                : code === "permission-denied"
+                  ? "권한이 없습니다. 관리자 계정으로 로그인했는지 확인해주세요."
+                  : "연결하지 못했습니다. UID 와 이메일을 다시 확인해주세요."
+      );
+    } finally {
+      setLinkSaving(false);
+    }
   }
 
   async function saveEditUser() {
@@ -948,6 +1013,96 @@ export default function AdminUsersPage() {
       {/* ── Tab 2: 기존 Firebase 계정 ────────────────────────────────────────── */}
       {tab === "existing" && (
         <div className="space-y-4">
+          {/* Auth 콘솔에서 만든 계정 연결 — users 문서가 없어 목록에 안 뜨는 계정용 */}
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+            <button
+              type="button"
+              onClick={() => setLinkOpen((v) => !v)}
+              className="w-full flex items-center justify-between px-4 py-3 text-left"
+            >
+              <span className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+                <LinkIcon className="w-4 h-4" />
+                기존 Firebase Auth 계정 연결
+              </span>
+              <span className="text-xs text-gray-400">{linkOpen ? "접기" : "열기"}</span>
+            </button>
+
+            {linkOpen && (
+              <div className="border-t border-gray-100 px-4 py-4 space-y-3">
+                <p className="text-xs text-gray-500 leading-relaxed">
+                  Authentication 콘솔에서 만든 계정은 Firestore 프로필이 없어 아래 목록에
+                  나타나지 않습니다. 콘솔의 <strong>사용자 UID</strong>를 붙여넣어 연결하세요.
+                  계정을 새로 만들지 않으며, 선택한 지점 <strong>하나</strong>에만 연결됩니다.
+                  역할은 지점장, 상태는 활성으로 설정됩니다.
+                </p>
+
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div>
+                    <label className="text-xs font-medium text-gray-700 block mb-1">지점</label>
+                    <select
+                      value={linkBranchId}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        setLinkBranchId(id);
+                        const b = branches.find((x) => x.id === id);
+                        // 지정 아이디가 있으면 이메일을 미리 채워 오타를 줄인다
+                        if (b && !linkEmail) setLinkEmail(defaultEmailFor(b.name, b.id));
+                      }}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    >
+                      <option value="">선택</option>
+                      {branches.map((b) => (
+                        <option key={b.id} value={b.id}>{b.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-700 block mb-1">이메일</label>
+                    <input
+                      value={linkEmail}
+                      onChange={(e) => setLinkEmail(e.target.value)}
+                      placeholder="beolli@returnlife.co.kr"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-700 block mb-1">
+                      사용자 UID
+                    </label>
+                    <input
+                      value={linkUid}
+                      onChange={(e) => setLinkUid(e.target.value)}
+                      placeholder="콘솔에서 복사한 UID"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono"
+                    />
+                  </div>
+                </div>
+
+                {linkError && (
+                  <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                    {linkError}
+                  </p>
+                )}
+                {linkNotice && (
+                  <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                    {linkNotice}
+                  </p>
+                )}
+
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={handleLinkExistingAccount}
+                    disabled={linkSaving || !linkUid.trim() || !linkEmail.trim() || !linkBranchId}
+                    className="px-4 py-2 bg-[#1e3a5f] text-white rounded-lg text-sm font-semibold hover:bg-[#16304f] disabled:opacity-40"
+                  >
+                    {linkSaving ? "연결 중..." : "연결하기"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           {users.length === 0 ? (
             <div className="text-center py-12 text-gray-400 text-sm">
               등록된 사용자가 없습니다
