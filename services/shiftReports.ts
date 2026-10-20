@@ -9,19 +9,17 @@ import {
   where,
   orderBy,
   serverTimestamp,
-  Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import {
   SHIFT_CONTENT_MAX_LENGTH,
-  SHIFT_EDIT_HISTORY_LIMIT,
   type BranchShiftReport,
-  type ShiftReportEdit,
   type ShiftReportStatus,
   type ShiftType,
 } from "@/types";
 import { isValidDateKey } from "@/lib/utils";
 import { resolveSubmissionState, shiftDeadlineAt } from "@/lib/shiftSchedule";
+import { planShiftReportWrite } from "@/lib/shiftReportWrite";
 
 // 기한·제출상태 계산은 Firestore 의존성이 없어 lib/shiftSchedule.ts 에 둔다.
 // 호출부가 한 모듈만 import 하면 되도록 여기서 다시 내보낸다.
@@ -110,8 +108,8 @@ export interface SaveShiftReportInput {
  *
  * - 제출(submitted) 이후에는 임시저장(draft)으로 되돌리지 않는다.
  * - 제출된 보고의 본문이 바뀌면 수정 이력을 남긴다.
- *   (배열 원소에는 serverTimestamp를 넣을 수 없어 Timestamp.now()를 쓴다.
- *    따라서 수정 시각은 클라이언트 시각이다. 권위 있는 값은 submittedAt 하나뿐이다.)
+ *   시각은 모두 서버 시각이다 — submittedAt(최초 제출), updatedAt(최종 수정),
+ *   그리고 이력 각 항목의 previousVersionAt(그 내용이 저장돼 있던 시각).
  */
 export async function saveShiftReport(input: SaveShiftReportInput): Promise<string> {
   const { branchId, branchName, reportDate, shift, status, writerUid, writerName } = input;
@@ -131,8 +129,13 @@ export async function saveShiftReport(input: SaveShiftReportInput): Promise<stri
   const id = shiftReportId(branchId, reportDate, shift);
   const ref = doc(db, COLLECTION, id);
   const existing = await getDoc(ref);
+  const prev = existing.exists() ? (existing.data() as BranchShiftReport) : null;
 
-  if (!existing.exists()) {
+  // 무엇을 어떻게 바꿀지는 순수 로직(lib/shiftReportWrite.ts)이 결정한다.
+  // 여기서는 그 결정을 Firestore 쓰기로 옮기기만 한다.
+  const plan = planShiftReportWrite(prev, { content, status, writerUid, writerName });
+
+  if (plan.isCreate) {
     await setDoc(ref, {
       id,
       branchId,
@@ -140,48 +143,29 @@ export async function saveShiftReport(input: SaveShiftReportInput): Promise<stri
       reportDate,
       shift,
       content,
-      status,
+      status: plan.nextStatus,
       writerUid,
       writerName,
       editCount: 0,
       edits: [],
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
-      ...(status === "submitted" ? { submittedAt: serverTimestamp() } : {}),
+      ...(plan.setSubmittedAt ? { submittedAt: serverTimestamp() } : {}),
     });
     return id;
   }
-
-  const prev = existing.data() as BranchShiftReport;
-
-  // 제출된 보고를 임시저장으로 되돌리지 않는다
-  const nextStatus: ShiftReportStatus = prev.status === "submitted" ? "submitted" : status;
-
-  const isEditAfterSubmit = prev.status === "submitted" && prev.content !== content;
-
-  const edits: ShiftReportEdit[] = isEditAfterSubmit
-    ? [
-        ...(prev.edits ?? []),
-        {
-          editedAt: Timestamp.now(),
-          editedByUid: writerUid,
-          editedByName: writerName,
-          previousContent: prev.content ?? "",
-        },
-      ].slice(-SHIFT_EDIT_HISTORY_LIMIT)
-    : (prev.edits ?? []);
 
   // writerUid / writerName 은 최초 작성자를 그대로 유지한다.
   // 다른 담당자가 고친 경우는 edits 이력에만 남는다 (규칙에서도 변경을 막는다).
   await updateDoc(ref, {
     content,
-    status: nextStatus,
+    status: plan.nextStatus,
     branchName,
-    edits,
-    editCount: (prev.editCount ?? 0) + (isEditAfterSubmit ? 1 : 0),
+    edits: plan.nextEdits,
+    editCount: plan.nextEditCount,
     updatedAt: serverTimestamp(),
-    // 최초 제출 시각만 기록한다 (수정해도 제출 시각은 바뀌지 않는다)
-    ...(nextStatus === "submitted" && !prev.submittedAt ? { submittedAt: serverTimestamp() } : {}),
+    // 최초 제출일 때만 기록한다 — 이후 수정에서는 건드리지 않는다
+    ...(plan.setSubmittedAt ? { submittedAt: serverTimestamp() } : {}),
   });
 
   return id;

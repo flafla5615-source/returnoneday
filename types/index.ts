@@ -500,7 +500,18 @@ export const SHIFT_CONTENT_MAX_LENGTH = 5000;
 export const SHIFT_EDIT_HISTORY_LIMIT = 20;
 
 export interface ShiftReportEdit {
-  editedAt: Timestamp;
+  /**
+   * 이 버전이 저장된 서버 시각.
+   * Firestore 는 배열 원소에 serverTimestamp() 를 넣을 수 없어서, 수정 시점에
+   * 문서에 이미 저장돼 있던 updatedAt(서버 시각)을 그대로 복사해 넣는다.
+   * → 기기 시계와 무관하게 정확하다.
+   */
+  previousVersionAt?: Timestamp;
+  /**
+   * @deprecated 기기(브라우저) 시각이라 신뢰할 수 없어 더 이상 기록하지 않는다.
+   * 이 필드만 있는 기존 문서를 읽기 위해 남겨둔다.
+   */
+  editedAt?: Timestamp;
   editedByUid: string;
   editedByName: string;
   /** 수정 직전 본문 — 무엇이 바뀌었는지 본사에서 확인할 수 있게 남긴다 */

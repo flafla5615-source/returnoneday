@@ -84,6 +84,27 @@ export interface ShiftSubmissionInfo {
   backdated: boolean;
   /** 보고일로부터 며칠 뒤에 제출했는가 (같은 날 제출이면 0) */
   daysAfterReportDate: number;
+  /** 기한을 넘긴 시간(ms). 정시 제출이거나 아직 미제출이면 0 */
+  lateByMs: number;
+}
+
+/**
+ * 지연 시간을 사람이 읽는 문구로 — "2시간 15분", "1일 3시간", "12분".
+ * 가장 큰 단위 두 개까지만 쓴다 (1일 3시간 20분 → "1일 3시간").
+ * 1분 미만은 "1분 미만" 으로 표기해 0분이라고 쓰지 않는다.
+ */
+export function formatLateDuration(ms: number): string {
+  if (ms <= 0) return "";
+  const totalMinutes = Math.floor(ms / 60000);
+  if (totalMinutes < 1) return "1분 미만";
+
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+  const minutes = totalMinutes % 60;
+
+  if (days > 0) return hours > 0 ? `${days}일 ${hours}시간` : `${days}일`;
+  if (hours > 0) return minutes > 0 ? `${hours}시간 ${minutes}분` : `${hours}시간`;
+  return `${minutes}분`;
 }
 
 /**
@@ -108,12 +129,19 @@ export function describeSubmission(
     ? daysBetweenDateKeys(reportDate, kstDateKey(submittedAt))
     : 0;
 
+  // 지연 시간은 "제출 시각 - 기한". 미제출이거나 정시면 0.
+  const lateByMs =
+    submittedAt && state === "late"
+      ? Math.max(0, submittedAt.getTime() - deadline.getTime())
+      : 0;
+
   return {
     state,
     submittedAt,
     deadline,
     backdated: daysAfterReportDate > 0,
     daysAfterReportDate,
+    lateByMs,
   };
 }
 
@@ -144,4 +172,21 @@ export function listDateKeysDesc(from: string, to: string): string[] {
 /** 오늘(KST)에서 days일 전의 날짜 키. */
 export function shiftDateKey(dateKey: string, days: number): string {
   return new Date((dayIndexOf(dateKey) + days) * 86400000).toISOString().slice(0, 10);
+}
+
+/** 수정 이력 한 항목의 시각 — 서버 시각을 우선하고, 없으면 과거 기기 시각으로 대체한다. */
+export interface ShiftEditTime {
+  at: Date | null;
+  /** 서버 시각이 아니라 기기 시계로 기록된 과거 데이터인가 */
+  fromDeviceClock: boolean;
+}
+
+export function editVersionTime(edit: {
+  previousVersionAt?: { toDate?: () => Date };
+  editedAt?: { toDate?: () => Date };
+}): ShiftEditTime {
+  const server = toDateSafe(edit.previousVersionAt);
+  if (server) return { at: server, fromDeviceClock: false };
+  // 서버 시각 도입 이전에 저장된 문서 — 기기 시각이라는 점을 화면에 밝힌다
+  return { at: toDateSafe(edit.editedAt), fromDeviceClock: true };
 }

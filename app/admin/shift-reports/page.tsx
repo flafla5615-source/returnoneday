@@ -3,7 +3,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { getAllBranches } from "@/services/branches";
 import { getShiftReportsInRange } from "@/services/shiftReports";
-import { describeSubmission, resolveSubmissionState, weekdayLabel } from "@/lib/shiftSchedule";
+import {
+  describeSubmission,
+  editVersionTime,
+  formatLateDuration,
+  resolveSubmissionState,
+  weekdayLabel,
+} from "@/lib/shiftSchedule";
 import { ShiftStateBadge } from "@/components/common/StatusBadge";
 import LoadingState from "@/components/common/LoadingState";
 import {
@@ -287,9 +293,14 @@ export default function AdminShiftReportsPage() {
                               if (!info.submittedAt) return null;
                               return (
                                 <>
-                                  <p className="mt-1 text-xs text-gray-400">
+                                  <p className="mt-1 text-xs text-gray-500">
                                     제출 {formatDateTime(info.submittedAt)}
                                   </p>
+                                  {info.lateByMs > 0 && (
+                                    <p className="mt-0.5 text-[11px] font-medium text-amber-700">
+                                      기한 {SHIFT_DEADLINE[shift]} · {formatLateDuration(info.lateByMs)} 지연
+                                    </p>
+                                  )}
                                   {info.backdated && (
                                     <p className="mt-0.5 text-[11px] text-amber-600">
                                       소급 작성 ({info.daysAfterReportDate}일 뒤)
@@ -302,6 +313,7 @@ export default function AdminShiftReportsPage() {
                               <p className="mt-0.5 flex items-center gap-1 text-xs text-gray-400">
                                 <HistoryIcon className="h-3 w-3" />
                                 수정 {report.editCount}회
+                                {report.updatedAt && ` · 최종 ${formatDateTime(report.updatedAt.toDate())}`}
                               </p>
                             )}
                             {isOpen && (
@@ -374,6 +386,8 @@ function ShiftDetail({
             {info.submittedAt
               ? ` · 최초 제출 ${formatDateTime(info.submittedAt)}`
               : " · 임시저장 (미제출)"}
+            {info.lateByMs > 0 &&
+              ` · 기한 ${formatDateTime(info.deadline)} 대비 ${formatLateDuration(info.lateByMs)} 지연`}
             {info.backdated && ` · ${info.daysAfterReportDate}일 뒤 소급 작성`}
             {` · 작성자 ${report.writerName}`}
           </p>
@@ -391,16 +405,30 @@ function ShiftDetail({
           </button>
           {showHistory && (
             <ul className="mt-1 space-y-1.5">
-              {[...(report.edits ?? [])].reverse().map((edit, i) => (
-                <li key={i} className="rounded border border-gray-200 bg-white p-1.5">
-                  <p className="text-[11px] text-gray-500">
-                    {formatDateTime(edit.editedAt.toDate())} · {edit.editedByName}
-                  </p>
-                  <p className="mt-0.5 whitespace-pre-wrap text-[11px] text-gray-600">
-                    {edit.previousContent || "(이전 내용 없음)"}
+              {report.updatedAt && (
+                <li className="rounded border border-gray-300 bg-white p-1.5">
+                  <p className="text-[11px] font-medium text-gray-600">
+                    현재 내용 · 최종 수정 {formatDateTime(report.updatedAt.toDate())}
                   </p>
                 </li>
-              ))}
+              )}
+              {[...(report.edits ?? [])].reverse().map((edit, i) => {
+                const t = editVersionTime(edit);
+                return (
+                  <li key={i} className="rounded border border-gray-200 bg-white p-1.5">
+                    <p className="text-[11px] text-gray-500">
+                      {t.at ? `${formatDateTime(t.at)} 저장본` : "저장 시각 기록 없음"}
+                      {t.at && t.fromDeviceClock && (
+                        <span className="text-gray-400"> (기기 시각)</span>
+                      )}
+                      {` · 수정자 ${edit.editedByName}`}
+                    </p>
+                    <p className="mt-0.5 whitespace-pre-wrap text-[11px] text-gray-600">
+                      {edit.previousContent || "(이전 내용 없음)"}
+                    </p>
+                  </li>
+                );
+              })}
               {report.editCount > (report.edits ?? []).length && (
                 <li className="text-[11px] text-gray-400">
                   오래된 이력 {report.editCount - (report.edits ?? []).length}건은 보관 한도를 넘어

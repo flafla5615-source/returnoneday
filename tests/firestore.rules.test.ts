@@ -625,6 +625,47 @@ describe("branch shift reports — 담당 지점만 작성·조회", () => {
     );
   });
 
+  test("최초 제출 시각은 수정해도 바뀌지 않는다", async () => {
+    const date = "2026-02-10";
+    const id = shiftId(BRANCH_ID, date, "closing");
+
+    // 서버 시각으로 제출된 상태를 만들어 둔다
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(
+        doc(ctx.firestore(), "branchShiftReports", id),
+        shiftPayload(BRANCH_ID, date, "closing", MANAGER_UID, {
+          status: "submitted",
+          submittedAt: new Date("2026-02-10T11:50:00Z"),
+        })
+      );
+    });
+
+    const db = authedDb(MANAGER_UID);
+
+    // 본문 수정은 되지만 submittedAt 을 함께 바꾸려 하면 거부된다
+    await assertFails(
+      updateDoc(doc(db, "branchShiftReports", id), {
+        content: "수정본",
+        submittedAt: new Date("2026-02-10T11:00:00Z"), // 정시였던 것처럼 앞당기기
+        updatedAt: serverTimestamp(),
+      })
+    );
+    await assertFails(
+      updateDoc(doc(db, "branchShiftReports", id), {
+        submittedAt: serverTimestamp(), // 지금 시각으로 덮어쓰기
+        updatedAt: serverTimestamp(),
+      })
+    );
+    // submittedAt 을 건드리지 않는 본문 수정은 허용된다
+    await assertSucceeds(
+      updateDoc(doc(db, "branchShiftReports", id), {
+        content: "수정본",
+        editCount: 1,
+        updatedAt: serverTimestamp(),
+      })
+    );
+  });
+
   test("다지점 담당자는 배정된 모든 지점에 쓸 수 있다", async () => {
     const db = authedDb(MULTI_MANAGER_UID);
     const today = getKoreaToday();

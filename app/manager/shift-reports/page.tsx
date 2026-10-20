@@ -6,6 +6,8 @@ import { getBranchesByIds } from "@/services/branches";
 import { getShiftReportsForDay, getShiftReportsInRange, saveShiftReport } from "@/services/shiftReports";
 import {
   describeSubmission,
+  editVersionTime,
+  formatLateDuration,
   isWritableReportDate,
   listDateKeysDesc,
   resolveSubmissionState,
@@ -427,6 +429,11 @@ export default function ManagerShiftReportsPage() {
                         {info.submittedAt && (
                           <>
                             {" · "}최초 제출 {formatDateTime(info.submittedAt)}
+                            {info.lateByMs > 0 && (
+                              <span className="ml-1 text-amber-600">
+                                ({formatLateDuration(info.lateByMs)} 지연)
+                              </span>
+                            )}
                             {info.backdated && (
                               <span className="ml-1 text-amber-600">
                                 ({info.daysAfterReportDate}일 뒤 소급)
@@ -449,16 +456,30 @@ export default function ManagerShiftReportsPage() {
                       )}
                       {openHistory[shift] && (
                         <ul className="space-y-2 pt-1">
-                          {[...(report.edits ?? [])].reverse().map((edit, i) => (
-                            <li key={i} className="rounded-lg bg-gray-50 p-2">
-                              <p className="text-[11px] text-gray-500">
-                                {formatDateTime(edit.editedAt.toDate())} · {edit.editedByName}
-                              </p>
-                              <p className="mt-1 whitespace-pre-wrap text-[11px] text-gray-600">
-                                {edit.previousContent || "(이전 내용 없음)"}
+                          {report.updatedAt && (
+                            <li className="rounded-lg border border-gray-200 bg-white p-2">
+                              <p className="text-[11px] font-medium text-gray-600">
+                                현재 내용 · 최종 수정 {formatDateTime(report.updatedAt.toDate())}
                               </p>
                             </li>
-                          ))}
+                          )}
+                          {[...(report.edits ?? [])].reverse().map((edit, i) => {
+                            const t = editVersionTime(edit);
+                            return (
+                              <li key={i} className="rounded-lg bg-gray-50 p-2">
+                                <p className="text-[11px] text-gray-500">
+                                  {t.at ? `${formatDateTime(t.at)} 저장본` : "저장 시각 기록 없음"}
+                                  {t.at && t.fromDeviceClock && (
+                                    <span className="text-gray-400"> (기기 시각)</span>
+                                  )}
+                                  {` · 수정자 ${edit.editedByName}`}
+                                </p>
+                                <p className="mt-1 whitespace-pre-wrap text-[11px] text-gray-600">
+                                  {edit.previousContent || "(이전 내용 없음)"}
+                                </p>
+                              </li>
+                            );
+                          })}
                           {report.editCount > (report.edits ?? []).length && (
                             <li className="text-[11px] text-gray-400">
                               오래된 이력 {report.editCount - (report.edits ?? []).length}건은 보관
@@ -550,6 +571,8 @@ export default function ManagerShiftReportsPage() {
                                     {info.submittedAt
                                       ? `최초 제출 ${formatDateTime(info.submittedAt)}`
                                       : "임시저장 (미제출)"}
+                                    {info.lateByMs > 0 &&
+                                      ` · ${formatLateDuration(info.lateByMs)} 지연`}
                                     {info.backdated && ` · ${info.daysAfterReportDate}일 뒤 소급`}
                                     {report.editCount > 0 && ` · 수정 ${report.editCount}회`}
                                   </p>
