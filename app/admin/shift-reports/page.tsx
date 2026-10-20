@@ -3,19 +3,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { getAllBranches } from "@/services/branches";
 import { getShiftReportsInRange } from "@/services/shiftReports";
-import {
-  describeSubmission,
-  editVersionTime,
-  formatLateDuration,
-  resolveSubmissionState,
-  weekdayLabel,
-} from "@/lib/shiftSchedule";
-import { ShiftStateBadge } from "@/components/common/StatusBadge";
+import { resolveSubmissionState, weekdayLabel } from "@/lib/shiftSchedule";
 import LoadingState from "@/components/common/LoadingState";
+import {
+  ReportDetailPanel,
+  ShiftSummaryCell,
+  type BranchRow,
+  type ShiftMap,
+} from "@/components/reports/ShiftReportViews";
 import {
   addDaysToDateKey,
   formatDate,
-  formatDateTime,
   getKoreaToday,
   isFutureKoreaDate,
   isValidDateKey,
@@ -26,18 +24,24 @@ import {
   SHIFT_TYPES,
   type Branch,
   type BranchShiftReport,
-  type ShiftSubmissionState,
   type ShiftType,
 } from "@/types";
-import { ChevronLeftIcon, ChevronRightIcon, HistoryIcon } from "lucide-react";
+import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 
-type ShiftMap = Record<ShiftType, BranchShiftReport | null>;
+/* ══════════════════════════════════════════════════════════════════════════
+   본사 지점별 일일보고 현황
 
-interface BranchRow {
-  branch: Branch;
-  reports: ShiftMap;
-  states: Record<ShiftType, ShiftSubmissionState>;
-}
+   레이아웃 원칙
+   ─────────────
+   현황표에는 "요약"만 둔다 — 지점명, 제출 상태, 제출 시각, 지연 시간.
+   보고 원문은 표 바깥의 넓은 상세 화면에서만 보여준다.
+
+   원문을 표 셀에 넣으면 두 가지 문제가 생긴다.
+   1. 좁은 열(전체 폭의 1/4)에 긴 글이 들어가 글자가 과하게 줄바꿈되고 행이 길어진다.
+   2. 표가 내용에 따라 열 너비를 자동 계산하므로, 지점명이나 본문 길이에 따라
+      지점마다 열 비율이 달라진다. (특정 지점만 넓어 보이는 원인)
+   그래서 표는 table-fixed 로 열 너비를 고정하고, 원문은 상세 화면으로 분리했다.
+   ══════════════════════════════════════════════════════════════════════════ */
 
 const EMPTY: ShiftMap = { morning: null, closing: null };
 
@@ -48,7 +52,7 @@ export default function AdminShiftReportsPage() {
   const [reports, setReports] = useState<BranchShiftReport[]>([]);
   const [date, setDate] = useState(today);
   const [branchFilter, setBranchFilter] = useState("");
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [detailBranchId, setDetailBranchId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -135,11 +139,16 @@ export default function AdminShiftReportsPage() {
     return counts;
   }, [branches, reports, date]);
 
+  const detailRow = useMemo(
+    () => rows.find((r) => r.branch.id === detailBranchId) ?? null,
+    [rows, detailBranchId]
+  );
+
   function shiftDate(days: number) {
     const next = addDaysToDateKey(date, days);
     if (isFutureKoreaDate(next)) return;
     setDate(next);
-    setExpanded(null);
+    setDetailBranchId(null);
   }
 
   return (
@@ -171,7 +180,7 @@ export default function AdminShiftReportsPage() {
               const value = e.target.value;
               if (isValidDateKey(value) && !isFutureKoreaDate(value)) {
                 setDate(value);
-                setExpanded(null);
+                setDetailBranchId(null);
               }
             }}
             className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]"
@@ -189,7 +198,7 @@ export default function AdminShiftReportsPage() {
             type="button"
             onClick={() => {
               setDate(today);
-              setExpanded(null);
+              setDetailBranchId(null);
             }}
             className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
           >
@@ -237,7 +246,7 @@ export default function AdminShiftReportsPage() {
         ))}
       </div>
 
-      {/* 지점별 현황 */}
+      {/* 지점별 현황 — 요약만. 원문은 상세 화면에서 본다. */}
       {loading ? (
         <LoadingState />
       ) : rows.length === 0 ? (
@@ -245,9 +254,16 @@ export default function AdminShiftReportsPage() {
           표시할 지점이 없습니다.
         </p>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+        <>
+          {/* PC — 열 너비를 고정해 모든 지점이 같은 레이아웃을 쓴다 */}
+          <div className="hidden overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm md:block">
+            <table className="w-full table-fixed text-sm">
+              <colgroup>
+                <col className="w-[30%]" />
+                <col className="w-[27%]" />
+                <col className="w-[27%]" />
+                <col className="w-[16%]" />
+              </colgroup>
               <thead className="bg-gray-50 text-left text-xs text-gray-500">
                 <tr>
                   <th className="px-4 py-2 font-medium">지점</th>
@@ -257,187 +273,77 @@ export default function AdminShiftReportsPage() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => {
-                  const isOpen = expanded === row.branch.id;
-                  const hasContent = SHIFT_TYPES.some((s) => row.reports[s]);
-                  return (
-                    <tr
-                      key={row.branch.id}
-                      className="border-t border-gray-100 align-top"
-                    >
-                      <td className="px-4 py-3">
-                        <p className="font-medium text-gray-800">{row.branch.name}</p>
-                        <p className="text-xs text-gray-400">{row.branch.brand}</p>
+                {rows.map((row) => (
+                  <tr
+                    key={row.branch.id}
+                    onClick={() => setDetailBranchId(row.branch.id)}
+                    className="cursor-pointer border-t border-gray-100 align-top hover:bg-gray-50"
+                  >
+                    <td className="px-4 py-3">
+                      <p className="truncate font-medium text-gray-800">{row.branch.name}</p>
+                      <p className="truncate text-xs text-gray-400">{row.branch.brand}</p>
+                    </td>
 
-                        {isOpen && (
-                          <div className="mt-3 space-y-3 md:hidden">
-                            {SHIFT_TYPES.map((shift) => (
-                              <ShiftDetail
-                                key={shift}
-                                shift={shift}
-                                report={row.reports[shift]}
-                                reportDate={date}
-                              />
-                            ))}
-                          </div>
-                        )}
+                    {SHIFT_TYPES.map((shift) => (
+                      <td key={shift} className="px-4 py-3">
+                        <ShiftSummaryCell
+                          shift={shift}
+                          report={row.reports[shift]}
+                          state={row.states[shift]}
+                          reportDate={date}
+                        />
                       </td>
+                    ))}
 
-                      {SHIFT_TYPES.map((shift) => {
-                        const report = row.reports[shift];
-                        return (
-                          <td key={shift} className="px-4 py-3">
-                            <ShiftStateBadge state={row.states[shift]} />
-                            {(() => {
-                              const info = describeSubmission(report, date, shift);
-                              if (!info.submittedAt) return null;
-                              return (
-                                <>
-                                  <p className="mt-1 text-xs text-gray-500">
-                                    제출 {formatDateTime(info.submittedAt)}
-                                  </p>
-                                  {info.lateByMs > 0 && (
-                                    <p className="mt-0.5 text-[11px] font-medium text-amber-700">
-                                      기한 {SHIFT_DEADLINE[shift]} · {formatLateDuration(info.lateByMs)} 지연
-                                    </p>
-                                  )}
-                                  {info.backdated && (
-                                    <p className="mt-0.5 text-[11px] text-amber-600">
-                                      소급 작성 ({info.daysAfterReportDate}일 뒤)
-                                    </p>
-                                  )}
-                                </>
-                              );
-                            })()}
-                            {!!report?.editCount && (
-                              <p className="mt-0.5 flex items-center gap-1 text-xs text-gray-400">
-                                <HistoryIcon className="h-3 w-3" />
-                                수정 {report.editCount}회
-                                {report.updatedAt && ` · 최종 ${formatDateTime(report.updatedAt.toDate())}`}
-                              </p>
-                            )}
-                            {isOpen && (
-                              <div className="mt-2 hidden md:block">
-                                <ShiftDetail shift={shift} report={report} reportDate={date} hideTitle />
-                              </div>
-                            )}
-                          </td>
-                        );
-                      })}
-
-                      <td className="px-4 py-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => setExpanded(isOpen ? null : row.branch.id)}
-                          disabled={!hasContent}
-                          className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40"
-                        >
-                          {isOpen ? "접기" : "원문"}
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
+                    <td className="px-4 py-3 text-right">
+                      <span className="inline-block rounded-lg border border-gray-200 px-2.5 py-1 text-xs text-gray-600">
+                        보고 보기
+                      </span>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
-/** 보고 원문 + 수정 이력 */
-function ShiftDetail({
-  shift,
-  report,
-  reportDate,
-  hideTitle,
-}: {
-  shift: ShiftType;
-  report: BranchShiftReport | null;
-  reportDate: string;
-  hideTitle?: boolean;
-}) {
-  const [showHistory, setShowHistory] = useState(false);
-
-  if (!report) {
-    return (
-      <div className="rounded-lg bg-gray-50 p-2 text-xs text-gray-400">
-        {!hideTitle && <p className="mb-1 font-medium text-gray-500">{SHIFT_LABEL[shift]}</p>}
-        작성된 보고가 없습니다.
-      </div>
-    );
-  }
-
-  return (
-    <div className="rounded-lg bg-gray-50 p-2">
-      {!hideTitle && (
-        <p className="mb-1 text-xs font-medium text-gray-500">{SHIFT_LABEL[shift]}</p>
-      )}
-      <p className="whitespace-pre-wrap text-xs leading-relaxed text-gray-700">
-        {report.content || "(내용 없음)"}
-      </p>
-      {(() => {
-        const info = describeSubmission(report, reportDate, shift);
-        return (
-          <p className="mt-2 text-[11px] text-gray-400">
-            보고일 {formatDate(report.reportDate)}
-            {info.submittedAt
-              ? ` · 최초 제출 ${formatDateTime(info.submittedAt)}`
-              : " · 임시저장 (미제출)"}
-            {info.lateByMs > 0 &&
-              ` · 기한 ${formatDateTime(info.deadline)} 대비 ${formatLateDuration(info.lateByMs)} 지연`}
-            {info.backdated && ` · ${info.daysAfterReportDate}일 뒤 소급 작성`}
-            {` · 작성자 ${report.writerName}`}
-          </p>
-        );
-      })()}
-
-      {report.editCount > 0 && (
-        <>
-          <button
-            type="button"
-            onClick={() => setShowHistory((v) => !v)}
-            className="mt-1 text-[11px] text-gray-500 underline hover:text-gray-700"
-          >
-            수정 이력 {report.editCount}회 {showHistory ? "접기" : "보기"}
-          </button>
-          {showHistory && (
-            <ul className="mt-1 space-y-1.5">
-              {report.updatedAt && (
-                <li className="rounded border border-gray-300 bg-white p-1.5">
-                  <p className="text-[11px] font-medium text-gray-600">
-                    현재 내용 · 최종 수정 {formatDateTime(report.updatedAt.toDate())}
-                  </p>
-                </li>
-              )}
-              {[...(report.edits ?? [])].reverse().map((edit, i) => {
-                const t = editVersionTime(edit);
-                return (
-                  <li key={i} className="rounded border border-gray-200 bg-white p-1.5">
-                    <p className="text-[11px] text-gray-500">
-                      {t.at ? `${formatDateTime(t.at)} 저장본` : "저장 시각 기록 없음"}
-                      {t.at && t.fromDeviceClock && (
-                        <span className="text-gray-400"> (기기 시각)</span>
-                      )}
-                      {` · 수정자 ${edit.editedByName}`}
-                    </p>
-                    <p className="mt-0.5 whitespace-pre-wrap text-[11px] text-gray-600">
-                      {edit.previousContent || "(이전 내용 없음)"}
-                    </p>
-                  </li>
-                );
-              })}
-              {report.editCount > (report.edits ?? []).length && (
-                <li className="text-[11px] text-gray-400">
-                  오래된 이력 {report.editCount - (report.edits ?? []).length}건은 보관 한도를 넘어
-                  본문이 남아 있지 않습니다.
-                </li>
-              )}
-            </ul>
-          )}
+          {/* 모바일 — 가로 스크롤 없이 화면 폭을 그대로 쓰는 카드 목록 */}
+          <div className="space-y-2 md:hidden">
+            {rows.map((row) => (
+              <button
+                key={row.branch.id}
+                type="button"
+                onClick={() => setDetailBranchId(row.branch.id)}
+                className="w-full rounded-xl border border-gray-200 bg-white p-3 text-left shadow-sm active:bg-gray-50"
+              >
+                <div className="flex items-baseline justify-between gap-2">
+                  <p className="min-w-0 truncate font-medium text-gray-800">{row.branch.name}</p>
+                  <span className="shrink-0 text-xs text-gray-400">보고 보기</span>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  {SHIFT_TYPES.map((shift) => (
+                    <div key={shift} className="rounded-lg bg-gray-50 p-2">
+                      <p className="mb-1 text-[11px] text-gray-500">{SHIFT_LABEL[shift]}</p>
+                      <ShiftSummaryCell
+                        shift={shift}
+                        report={row.reports[shift]}
+                        state={row.states[shift]}
+                        reportDate={date}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </button>
+            ))}
+          </div>
         </>
+      )}
+
+      {detailRow && (
+        <ReportDetailPanel
+          row={detailRow}
+          reportDate={date}
+          onClose={() => setDetailBranchId(null)}
+        />
       )}
     </div>
   );
