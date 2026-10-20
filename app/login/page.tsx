@@ -44,6 +44,8 @@ export default function LoginPage() {
   const router = useRouter();
   const [showPw, setShowPw] = useState(false);
   const [authError, setAuthError] = useState("");
+  // 프로필이 없을 때만 채운다 — 본사에 전달할 연결용 UID
+  const [unlinkedUid, setUnlinkedUid] = useState("");
   const [loading, setLoading] = useState(false);
 
   const {
@@ -55,6 +57,7 @@ export default function LoginPage() {
   async function onSubmit(data: FormData) {
     setLoading(true);
     setAuthError("");
+    setUnlinkedUid("");
 
     // ── Step 1: Firebase Auth 로그인 ────────────────────────────────────────
     let user!: User;
@@ -71,9 +74,14 @@ export default function LoginPage() {
       const profile = await getUserProfile(user.uid);
 
       if (!profile) {
-        // Auth 계정은 있지만 Firestore users 문서가 없는 경우
+        // Auth 계정은 있지만 Firestore users 문서가 없는 경우.
+        // "승인 대기"가 아니라 "아직 지점에 연결되지 않음"이 정확한 원인이다.
+        // 비밀번호 확인까지 끝난 본인에게 본인 UID를 보여주는 것이라,
+        // 본사에 전달만 하면 Firebase 콘솔을 거치지 않고 연결할 수 있다.
+        const uid = user.uid;
         await logOut();
-        setAuthError("계정은 존재하지만 관리자 승인이 완료되지 않았습니다.");
+        setUnlinkedUid(uid);
+        setAuthError("아직 담당 지점에 연결되지 않은 계정입니다.");
         return;
       }
 
@@ -188,7 +196,19 @@ export default function LoginPage() {
             </p>
 
             {authError && (
-              <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{authError}</p>
+              <div className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 space-y-2">
+                <p>{authError}</p>
+                {unlinkedUid && (
+                  <>
+                    <p className="text-xs text-red-500">
+                      아래 연결 코드를 본사 관리자에게 전달해주세요.
+                    </p>
+                    <code className="block select-all break-all rounded border border-red-200 bg-white px-2 py-1.5 font-mono text-[11px] text-gray-700">
+                      {unlinkedUid}
+                    </code>
+                  </>
+                )}
+              </div>
             )}
 
             <button
