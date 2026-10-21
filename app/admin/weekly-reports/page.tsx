@@ -17,7 +17,7 @@ import {
 import LoadingState from "@/components/common/LoadingState";
 import { formatDateTime } from "@/lib/utils";
 import type { Branch, BranchWeeklyReport } from "@/types";
-import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
+import { ChevronLeftIcon, ChevronRightIcon, PaperclipIcon } from "lucide-react";
 
 /* 본사 주간보고 현황.
    일일보고 화면과 같은 원칙 — 표에는 요약만 두고, 원문은 넓은 상세 화면에서 본다.
@@ -200,16 +200,18 @@ export default function AdminWeeklyReportsPage() {
           <div className="hidden overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm md:block">
             <table className="w-full table-fixed text-sm">
               <colgroup>
-                <col className="w-[34%]" />
-                <col className="w-[22%]" />
-                <col className="w-[28%]" />
+                <col className="w-[30%]" />
+                <col className="w-[18%]" />
                 <col className="w-[16%]" />
+                <col className="w-[22%]" />
+                <col className="w-[14%]" />
               </colgroup>
               <thead className="bg-gray-50 text-left text-xs text-gray-500">
                 <tr>
                   <th className="px-4 py-2 font-medium">지점</th>
                   <th className="px-4 py-2 font-medium">상태</th>
-                  <th className="px-4 py-2 font-medium">제출 시각</th>
+                  <th className="px-4 py-2 font-medium">첨부</th>
+                  <th className="px-4 py-2 font-medium">최초 제출</th>
                   <th className="px-4 py-2 font-medium" />
                 </tr>
               </thead>
@@ -231,13 +233,23 @@ export default function AdminWeeklyReportsPage() {
                     <td className="px-4 py-3">
                       <WeeklyStateBadge state={resolveWeeklyState(row.report)} />
                     </td>
+                    <td className="px-4 py-3 text-xs text-gray-600">
+                      {row.report?.files?.length ? (
+                        <span className="inline-flex items-center gap-1">
+                          <PaperclipIcon className="h-3 w-3" />
+                          {row.report.files.length}개
+                        </span>
+                      ) : (
+                        <span className="text-gray-300">—</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-xs text-gray-500">
                       {row.report?.submittedAt
                         ? formatDateTime(row.report.submittedAt.toDate())
                         : "-"}
                       {!!row.report?.editCount && (
                         <span className="block text-[11px] text-gray-400">
-                          수정 {row.report.editCount}회
+                          재제출 {row.report.editCount}회
                         </span>
                       )}
                     </td>
@@ -270,7 +282,13 @@ export default function AdminWeeklyReportsPage() {
                   <p className="min-w-0 truncate font-medium text-gray-800">{row.branch.name}</p>
                   <WeeklyStateBadge state={resolveWeeklyState(row.report)} />
                 </div>
-                <p className="mt-1 text-xs text-gray-400">
+                <p className="mt-1 flex items-center gap-1 text-xs text-gray-400">
+                  {!!row.report?.files?.length && (
+                    <>
+                      <PaperclipIcon className="h-3 w-3" />
+                      {row.report.files.length}개 ·
+                    </>
+                  )}
                   {row.report?.submittedAt
                     ? `제출 ${formatDateTime(row.report.submittedAt.toDate())}`
                     : "제출 기록 없음"}

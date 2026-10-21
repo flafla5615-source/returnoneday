@@ -1,0 +1,78 @@
+rules_version = '2';
+
+// Firebase Storage 보안 규칙
+//
+// 주간보고 첨부파일만 다룬다. 그 외 경로는 전부 차단한다.
+// 역할·담당 지점 판단은 Firestore 의 users 문서를 읽어서 한다
+// (Firestore 규칙과 같은 기준을 쓰기 위해서다).
+//
+// 다운로드 URL 토큰에 대하여
+//   getDownloadURL() 이 돌려주는 URL 은 토큰이 붙어 있어 그 자체로는
+//   인증 없이 열린다. 그래서 URL 을 Firestore 에 저장하지 않고,
+//   아래 read 규칙을 통과한 사용자에게만 조회 시점에 발급한다.
+//   토큰을 무효화하려면 콘솔에서 해당 파일의 토큰을 재발급하면 된다.
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    function userData() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function hasProfile() {
+      return isAuth() &&
+        firestore.exists(/databases/(default)/documents/users/$(request.auth.uid));
+    }
+
+    function isAdmin() {
+      return hasProfile() && userData().role == 'admin' && userData().status == 'active';
+    }
+
+    function isActiveManager() {
+      return hasProfile() && userData().role == 'branch_manager' && userData().status == 'active';
+    }
+
+    function isManagerOfBranch(branchId) {
+      return isActiveManager() && branchId in userData().branchIds;
+    }
+
+    // 업로드 허용 형식 — 클라이언트가 확장자·시그니처 검증 후
+    // 표준 contentType 을 직접 지정해 올린다.
+    function allowedContentType() {
+      return request.resource.contentType in [
+        'application/pdf',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      ];
+    }
+
+    function withinSizeLimit() {
+      return request.resource.size > 0 && request.resource.size <= 20 * 1024 * 1024;
+    }
+
+    // ─── 주간보고 첨부파일 ───────────────────────────────────────────────
+    // 경로: branchWeeklyReports/{branchId}/{weekStartDate}/{fileName}
+    match /branchWeeklyReports/{branchId}/{weekStartDate}/{fileName} {
+      // 본사는 전 지점, 지점장은 담당 지점만 조회·다운로드
+      allow read: if isAdmin() || isManagerOfBranch(branchId);
+
+      // 업로드는 담당 지점장만. 본사는 조회 전용이라 쓰지 않는다.
+      allow write: if isManagerOfBranch(branchId)
+        && allowedContentType()
+        && withinSizeLimit();
+
+      // 삭제는 담당 지점장 또는 본사(정리 목적)
+      allow delete: if isAdmin() || isManagerOfBranch(branchId);
+    }
+
+    // 그 외 모든 경로 차단
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

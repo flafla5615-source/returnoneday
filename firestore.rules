@@ -634,13 +634,18 @@ service cloud.firestore {
     //
     // 제출 마감시간이 없어 지연 판정은 하지 않는다. 다만 submittedAt 은
     // 클라이언트가 임의 시각으로 쓰지 못하게 request.time 과 일치하는지 검사한다.
+    // 'content' 는 텍스트 방식이던 시절의 본문이다. 새로 쓰지는 않지만
+    // 기존 문서를 수정할 때 필드가 남아 있어도 통과하도록 목록에 유지한다.
     function validWeeklyReportData(weeklyId, data) {
       return data.keys().hasOnly([
           'id', 'branchId', 'branchName', 'weekStartDate', 'weekEndDate',
+          'files', 'fileHistory',
           'content', 'status', 'submittedAt', 'submittedBy', 'submittedByName',
           'updatedAt', 'updatedBy', 'updatedByName',
           'createdAt', 'editCount', 'editHistory'
         ])
+        && data.files is list && data.files.size() <= 10
+        && data.fileHistory is list && data.fileHistory.size() <= 100
         && data.id == weeklyId
         && data.branchId is string && data.branchId.size() > 0
         && data.branchName is string
@@ -648,7 +653,7 @@ service cloud.firestore {
         && data.weekEndDate is string && data.weekEndDate.size() == 10
         && data.weekStartDate < data.weekEndDate
         && weeklyId == data.branchId + '_' + data.weekStartDate
-        && data.content is string && data.content.size() <= 10000
+        && (!('content' in data.keys()) || data.content.size() <= 10000)
         && data.status in ['draft', 'submitted']
         && data.updatedBy is string && data.updatedBy.size() > 0
         && data.editCount is int && data.editCount >= 0
@@ -682,7 +687,7 @@ service cloud.firestore {
         && weeklySubmittedAtIsServerTime(request.resource.data)
         && (request.resource.data.status != 'submitted'
           || (request.resource.data.submittedAt == request.time
-            && request.resource.data.content.size() > 0))
+            && request.resource.data.files.size() > 0))
         && (isAdmin() ||
           (isActiveManager()
             && request.resource.data.branchId in getUserData().branchIds
@@ -699,8 +704,9 @@ service cloud.firestore {
         && request.resource.data.updatedAt == request.time
         && request.resource.data.editCount >= resource.data.editCount
         && !(resource.data.status == 'submitted' && request.resource.data.status == 'draft')
+        // 업로드된 파일이 없으면 제출 완료로 둘 수 없다
         && (request.resource.data.status != 'submitted'
-          || request.resource.data.content.size() > 0)
+          || request.resource.data.files.size() > 0)
         && (!('submittedAt' in resource.data.keys())
           ? weeklySubmittedAtIsServerTime(request.resource.data)
           : request.resource.data.submittedAt == resource.data.submittedAt)

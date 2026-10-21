@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getBranchesByIds } from "@/services/branches";
 import {
+  deleteWeeklyFile,
   getWeeklyReport,
   getWeeklyReportsInRange,
   resolveWeeklyState,
-  saveWeeklyReport,
+  submitWeeklyReport,
+  uploadWeeklyFile,
 } from "@/services/weeklyReports";
 import {
   currentWeekStart,
@@ -18,27 +20,38 @@ import {
   weekRangeLabel,
 } from "@/lib/weekSchedule";
 import {
+  WEEKLY_FILE_MAX_COUNT,
+  WEEKLY_FILE_MAX_BYTES,
+  formatFileSize,
+} from "@/lib/weeklyFiles";
+import {
+  PdfPreviewPanel,
+  WeeklyFileList,
   WeeklyReportDetailPanel,
   WeeklyStateBadge,
-  WideTextEditorPanel,
 } from "@/components/reports/WeeklyReportViews";
 import LoadingState from "@/components/common/LoadingState";
 import { formatDateTime } from "@/lib/utils";
-import {
-  WEEKLY_CONTENT_MAX_LENGTH,
-  type Branch,
-  type BranchWeeklyReport,
-  type WeeklyReportStatus,
-} from "@/types";
+import type { Branch, BranchWeeklyReport, WeeklyReportFile } from "@/types";
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
   HistoryIcon,
-  Maximize2Icon,
+  PaperclipIcon,
   PencilIcon,
+  UploadIcon,
 } from "lucide-react";
 
 type Tab = "write" | "history";
+
+interface UploadJob {
+  key: string;
+  name: string;
+  size: number;
+  percent: number;
+  status: "uploading" | "failed";
+  message?: string;
+}
 
 const HISTORY_RANGES = [
   { weeks: 8, label: "최근 8주" },
@@ -49,6 +62,7 @@ const HISTORY_RANGES = [
 export default function ManagerWeeklyReportsPage() {
   const { profile } = useAuth();
   const thisWeek = currentWeekStart();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [tab, setTab] = useState<Tab>("write");
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -56,8 +70,9 @@ export default function ManagerWeeklyReportsPage() {
   const [weekStart, setWeekStart] = useState(thisWeek);
 
   const [report, setReport] = useState<BranchWeeklyReport | null>(null);
-  const [draft, setDraft] = useState("");
-  const [wideOpen, setWideOpen] = useState(false);
+  const [jobs, setJobs] = useState<UploadJob[]>([]);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [preview, setPreview] = useState<WeeklyReportFile | null>(null);
 
   const [historyWeeks, setHistoryWeeks] = useState(8);
   const [historyReports, setHistoryReports] = useState<BranchWeeklyReport[]>([]);
@@ -66,7 +81,7 @@ export default function ManagerWeeklyReportsPage() {
 
   const [reloadKey, setReloadKey] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState<WeeklyReportStatus | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -79,13 +94,12 @@ export default function ManagerWeeklyReportsPage() {
         else setLoading(false);
       })
       .catch((err) => {
-        console.error("weekly report branches load failed:", err);
+        console.error("weekly branches load failed:", err);
         setError("지점 정보를 불러오지 못했습니다.");
         setLoading(false);
       });
   }, [profile]);
 
-  // 선택한 주차의 보고
   useEffect(() => {
     if (!branchId) return;
     let cancelled = false;
@@ -94,9 +108,7 @@ export default function ManagerWeeklyReportsPage() {
       setError(null);
       try {
         const loaded = await getWeeklyReport(branchId, weekStart);
-        if (cancelled) return;
-        setReport(loaded);
-        setDraft(loaded?.content ?? "");
+        if (!cancelled) setReport(loaded);
       } catch (err) {
         console.error("weekly report load failed:", err);
         if (cancelled) return;
@@ -111,7 +123,6 @@ export default function ManagerWeeklyReportsPage() {
     };
   }, [branchId, weekStart, reloadKey]);
 
-  // 지난 보고 내역 (내역 탭에서만)
   useEffect(() => {
     if (!branchId || tab !== "history") return;
     let cancelled = false;
@@ -142,7 +153,6 @@ export default function ManagerWeeklyReportsPage() {
     [branches, branchId]
   );
 
-  // 보고가 없는 주차도 보여줘야 빠뜨린 주가 드러난다
   const historyRows = useMemo(() => {
     const byWeek = new Map(historyReports.map((r) => [r.weekStartDate, r]));
     return listWeekStartsDesc(shiftWeek(thisWeek, -(historyWeeks - 1)), thisWeek).map((week) => ({
@@ -156,55 +166,116 @@ export default function ManagerWeeklyReportsPage() {
     [historyRows, detailWeek]
   );
 
+  const files = report?.files ?? [];
+  const isSubmitted = report?.status === "submitted";
+  const isThisWeek = weekStart === thisWeek;
+
   function goToWeek(next: string) {
     if (!isWritableWeek(next)) return;
     setWeekStart(next);
     setNotice(null);
     setError(null);
+    setJobs([]);
   }
 
-  async function handleSave(status: WeeklyReportStatus) {
-    if (!profile || !selectedBranch) return;
-
-    const content = draft.trim();
-    if (status === "submitted" && content.length === 0) {
-      setError("주간보고 내용을 입력해주세요.");
-      return;
-    }
-
-    setSaving(status);
+  async function handleFiles(selected: FileList | null) {
+    if (!selected || !profile || !selectedBranch) return;
     setError(null);
     setNotice(null);
+
+    // 한 번에 여러 개를 고르면 순서대로 올린다 (진행률을 개별 표시)
+    for (const file of Array.from(selected)) {
+      const key = `${file.name}-${file.size}-${Date.now()}-${Math.random()}`;
+      setJobs((prev) => [
+        ...prev,
+        { key, name: file.name, size: file.size, percent: 0, status: "uploading" },
+      ]);
+
+      try {
+        await uploadWeeklyFile({
+          branchId: selectedBranch.id,
+          branchName: selectedBranch.name,
+          weekStartDate: weekStart,
+          file,
+          uid: profile.uid,
+          name: profile.name,
+          onProgress: (percent) =>
+            setJobs((prev) => prev.map((j) => (j.key === key ? { ...j, percent } : j))),
+        });
+        // 성공한 파일만 목록에 반영한다
+        setJobs((prev) => prev.filter((j) => j.key !== key));
+        setReloadKey((k) => k + 1);
+      } catch (err) {
+        console.error("weekly upload failed:", err);
+        const message =
+          (err as Error & { userMessage?: string }).userMessage ??
+          ((err as { code?: string })?.code === "storage/unauthorized"
+            ? "업로드 권한이 없습니다. 담당 지점인지 확인해주세요."
+            : (err as { code?: string })?.code === "storage/retry-limit-exceeded"
+              ? "네트워크가 불안정해 업로드하지 못했습니다. 다시 시도해주세요."
+              : "업로드하지 못했습니다. 잠시 후 다시 시도해주세요.");
+        setJobs((prev) =>
+          prev.map((j) => (j.key === key ? { ...j, status: "failed", message } : j))
+        );
+      }
+    }
+
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  async function handleDelete(file: WeeklyReportFile) {
+    if (!profile || !selectedBranch) return;
+    setDeletingId(file.fileId);
+    setError(null);
     try {
-      await saveWeeklyReport({
+      await deleteWeeklyFile({
         branchId: selectedBranch.id,
-        branchName: selectedBranch.name,
         weekStartDate: weekStart,
-        content,
-        status,
+        fileId: file.fileId,
         uid: profile.uid,
         name: profile.name,
       });
-      setNotice(
-        status === "submitted"
-          ? `${weekRangeLabel(weekStart)} 주간보고를 제출했습니다.`
-          : `${weekRangeLabel(weekStart)} 주간보고를 임시저장했습니다.`
-      );
+      setNotice(`${file.name} 파일을 삭제했습니다.`);
       setReloadKey((k) => k + 1);
     } catch (err) {
-      console.error("weekly report save failed:", err);
+      console.error("weekly delete failed:", err);
+      setError("파일을 삭제하지 못했습니다.");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  async function handleSubmit() {
+    if (!profile || !selectedBranch) return;
+    if (files.length === 0) {
+      setError("첨부파일을 1개 이상 올린 뒤 제출해주세요.");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await submitWeeklyReport({
+        branchId: selectedBranch.id,
+        branchName: selectedBranch.name,
+        weekStartDate: weekStart,
+        uid: profile.uid,
+        name: profile.name,
+      });
+      setNotice(`${weekRangeLabel(weekStart)} 주간보고를 제출했습니다.`);
+      setReloadKey((k) => k + 1);
+    } catch (err) {
+      console.error("weekly submit failed:", err);
       const code = (err as { code?: string })?.code ?? (err as Error)?.message ?? "unknown";
       setError(
-        code === "permission-denied"
-          ? "작성 권한이 없습니다. 담당 지점인지 확인해주세요. (미래 주차는 작성할 수 없습니다)"
-          : code === "content-empty"
-            ? "주간보고 내용을 입력해주세요."
-            : code === "content-too-long"
-              ? `내용은 ${WEEKLY_CONTENT_MAX_LENGTH.toLocaleString("ko-KR")}자를 넘을 수 없습니다.`
-              : "저장하지 못했습니다. 잠시 후 다시 시도해주세요."
+        code === "no-files"
+          ? "첨부파일을 1개 이상 올린 뒤 제출해주세요."
+          : code === "permission-denied"
+            ? "제출 권한이 없습니다. 담당 지점인지 확인해주세요."
+            : "제출하지 못했습니다. 잠시 후 다시 시도해주세요."
       );
     } finally {
-      setSaving(null);
+      setSubmitting(false);
     }
   }
 
@@ -219,15 +290,16 @@ export default function ManagerWeeklyReportsPage() {
     );
   }
 
-  const isThisWeek = weekStart === thisWeek;
-  const isSubmitted = report?.status === "submitted";
-  const dirty = (report?.content ?? "") !== draft;
+  const uploading = jobs.some((j) => j.status === "uploading");
+  const canAddMore = files.length < WEEKLY_FILE_MAX_COUNT;
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">
       <div>
         <h1 className="text-lg font-bold text-gray-900">주간보고</h1>
-        <p className="text-xs text-gray-400">월요일 ~ 일요일 기준으로 한 주를 작성합니다.</p>
+        <p className="text-xs text-gray-400">
+          월요일 ~ 일요일 기준으로 보고서 파일을 첨부합니다. (PDF, XLSX, XLS, DOCX)
+        </p>
       </div>
 
       {branches.length > 1 && (
@@ -244,7 +316,6 @@ export default function ManagerWeeklyReportsPage() {
         </select>
       )}
 
-      {/* 탭 */}
       <div className="flex rounded-xl border border-gray-200 bg-white p-1 shadow-sm">
         {(
           [
@@ -279,10 +350,10 @@ export default function ManagerWeeklyReportsPage() {
         </p>
       )}
 
-      {/* ─── 보고 작성 ─────────────────────────────────────────────── */}
       {tab === "write" && (
         <>
-          <div className="space-y-2 rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
+          {/* 주차 이동 */}
+          <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
@@ -292,7 +363,6 @@ export default function ManagerWeeklyReportsPage() {
               >
                 <ChevronLeftIcon className="h-4 w-4" />
               </button>
-
               <div className="flex-1 text-center">
                 <p className="text-sm font-semibold text-gray-800">{weekRangeLabel(weekStart)}</p>
                 <p className="text-xs text-gray-400">
@@ -300,7 +370,6 @@ export default function ManagerWeeklyReportsPage() {
                   {isThisWeek && " · 이번 주"}
                 </p>
               </div>
-
               <button
                 type="button"
                 onClick={() => goToWeek(shiftWeek(weekStart, 1))}
@@ -310,7 +379,6 @@ export default function ManagerWeeklyReportsPage() {
               >
                 <ChevronRightIcon className="h-4 w-4" />
               </button>
-
               <button
                 type="button"
                 onClick={() => goToWeek(thisWeek)}
@@ -324,8 +392,8 @@ export default function ManagerWeeklyReportsPage() {
 
           {!isThisWeek && (
             <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              지난 주차 보고를 작성 중입니다. 보고 주차({weekRangeLabel(weekStart)})와 실제 제출
-              시각은 따로 기록됩니다.
+              지난 주차 보고입니다. 보고 주차({weekRangeLabel(weekStart)})와 실제 제출 시각은 따로
+              기록됩니다.
             </p>
           )}
 
@@ -335,74 +403,121 @@ export default function ManagerWeeklyReportsPage() {
             <section className="space-y-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <h2 className="text-sm font-semibold text-gray-800">주간보고</h2>
+                  <h2 className="text-sm font-semibold text-gray-800">첨부파일</h2>
                   <WeeklyStateBadge state={resolveWeeklyState(report)} />
+                  <span className="text-xs text-gray-400">
+                    {files.length} / {WEEKLY_FILE_MAX_COUNT}
+                  </span>
                 </div>
+              </div>
+
+              {/* 파일 선택 */}
+              <div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept=".pdf,.xlsx,.xls,.docx"
+                  onChange={(e) => handleFiles(e.target.files)}
+                  className="hidden"
+                  id="weekly-file-input"
+                />
+                <label
+                  htmlFor="weekly-file-input"
+                  className={
+                    canAddMore && !uploading
+                      ? "flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-gray-300 px-4 py-6 text-center hover:border-red-400 hover:bg-red-50/30"
+                      : "flex flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-gray-200 px-4 py-6 text-center opacity-50"
+                  }
+                >
+                  <UploadIcon className="h-5 w-5 text-gray-400" />
+                  <span className="text-sm font-medium text-gray-700">
+                    {canAddMore ? "파일 선택" : `최대 ${WEEKLY_FILE_MAX_COUNT}개까지 첨부했습니다`}
+                  </span>
+                  <span className="text-[11px] text-gray-400">
+                    PDF, XLSX, XLS, DOCX · 파일당 최대 {formatFileSize(WEEKLY_FILE_MAX_BYTES)}
+                  </span>
+                </label>
+              </div>
+
+              {/* 업로드 진행률 */}
+              {jobs.length > 0 && (
+                <ul className="space-y-2">
+                  {jobs.map((j) => (
+                    <li
+                      key={j.key}
+                      className={
+                        j.status === "failed"
+                          ? "rounded-lg border border-red-200 bg-red-50 p-2.5"
+                          : "rounded-lg border border-gray-200 p-2.5"
+                      }
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="min-w-0 break-words break-keep text-xs font-medium text-gray-700">
+                          {j.name}
+                        </p>
+                        <span className="shrink-0 text-[11px] text-gray-400">
+                          {j.status === "failed" ? "실패" : `${j.percent}%`}
+                        </span>
+                      </div>
+                      {j.status === "uploading" ? (
+                        <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                          <div
+                            className="h-full bg-[#1e3a5f] transition-all"
+                            style={{ width: `${j.percent}%` }}
+                          />
+                        </div>
+                      ) : (
+                        <div className="mt-1 flex items-center justify-between gap-2">
+                          <p className="text-[11px] text-red-600">{j.message}</p>
+                          <button
+                            type="button"
+                            onClick={() => setJobs((prev) => prev.filter((x) => x.key !== j.key))}
+                            className="shrink-0 text-[11px] text-gray-500 underline"
+                          >
+                            지우기
+                          </button>
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <WeeklyFileList
+                files={files}
+                onPreview={setPreview}
+                onDelete={handleDelete}
+                deletingId={deletingId}
+                emptyText="아직 첨부된 파일이 없습니다."
+              />
+
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-3">
+                <p className="text-xs text-gray-500">
+                  {report?.submittedAt
+                    ? `최초 제출 ${formatDateTime(report.submittedAt.toDate())}`
+                    : "미제출 (파일을 올린 뒤 제출해주세요)"}
+                </p>
                 <button
                   type="button"
-                  onClick={() => setWideOpen(true)}
-                  className="flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                  onClick={handleSubmit}
+                  disabled={submitting || uploading || files.length === 0}
+                  className="rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-40"
                 >
-                  <Maximize2Icon className="h-3.5 w-3.5" />
-                  넓게 작성
+                  {submitting ? "처리 중..." : isSubmitted ? "다시 제출" : "제출"}
                 </button>
               </div>
 
-              <textarea
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onClick={() => setWideOpen(true)}
-                maxLength={WEEKLY_CONTENT_MAX_LENGTH}
-                rows={10}
-                placeholder="이번 주 운영 내용을 자유롭게 작성해주세요. (클릭하면 넓은 작성 화면이 열립니다)"
-                className="w-full resize-y rounded-lg border border-gray-200 px-3 py-2 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-red-500"
-              />
-
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs text-gray-400">
-                  {draft.length.toLocaleString("ko-KR")} /{" "}
-                  {WEEKLY_CONTENT_MAX_LENGTH.toLocaleString("ko-KR")}자
+              {uploading && (
+                <p className="text-[11px] text-gray-400">
+                  업로드가 끝나야 제출할 수 있습니다.
                 </p>
-                <div className="flex flex-1 gap-2 sm:flex-none">
-                  {!isSubmitted && (
-                    <button
-                      type="button"
-                      onClick={() => handleSave("draft")}
-                      disabled={saving !== null}
-                      className="flex-1 rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 sm:flex-none"
-                    >
-                      {saving === "draft" ? "저장 중..." : "임시저장"}
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => handleSave("submitted")}
-                    disabled={saving !== null || !draft.trim() || (isSubmitted && !dirty)}
-                    className="flex-1 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-40 sm:flex-none"
-                  >
-                    {saving === "submitted" ? "처리 중..." : isSubmitted ? "수정 제출" : "제출"}
-                  </button>
-                </div>
-              </div>
-
-              {report && (
-                <div className="space-y-1 border-t border-gray-100 pt-3 text-xs text-gray-500">
-                  <p>
-                    {report.submittedAt
-                      ? `최초 제출 ${formatDateTime(report.submittedAt.toDate())}`
-                      : "임시저장 (미제출)"}
-                    {report.editCount > 0 &&
-                      report.updatedAt &&
-                      ` · 최종 수정 ${formatDateTime(report.updatedAt.toDate())} (${report.editCount}회)`}
-                  </p>
-                </div>
               )}
             </section>
           )}
         </>
       )}
 
-      {/* ─── 지난 보고 내역 ─────────────────────────────────────────── */}
       {tab === "history" && (
         <>
           <div className="flex gap-1 rounded-xl border border-gray-200 bg-white p-1 shadow-sm">
@@ -432,8 +547,13 @@ export default function ManagerWeeklyReportsPage() {
                     <p className="truncate text-sm font-medium text-gray-800">
                       {weekRangeLabel(row.week)}
                     </p>
-                    <p className="text-xs text-gray-400">
-                      {weekOfMonthLabel(row.week)}
+                    <p className="flex items-center gap-1 text-xs text-gray-400">
+                      {!!row.report?.files?.length && (
+                        <>
+                          <PaperclipIcon className="h-3 w-3" />
+                          {row.report.files.length}개
+                        </>
+                      )}
                       {row.report?.submittedAt &&
                         ` · 제출 ${formatDateTime(row.report.submittedAt.toDate())}`}
                     </p>
@@ -455,16 +575,7 @@ export default function ManagerWeeklyReportsPage() {
         </>
       )}
 
-      {wideOpen && (
-        <WideTextEditorPanel
-          title="주간보고 작성"
-          subtitle={`${selectedBranch?.name ?? ""} · ${weekRangeLabel(weekStart)}`}
-          value={draft}
-          maxLength={WEEKLY_CONTENT_MAX_LENGTH}
-          onChange={setDraft}
-          onClose={() => setWideOpen(false)}
-        />
-      )}
+      {preview && <PdfPreviewPanel file={preview} onClose={() => setPreview(null)} />}
 
       {detailWeek && (
         <WeeklyReportDetailPanel

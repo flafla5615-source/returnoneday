@@ -13,6 +13,7 @@ import {
   getDocs,
   query,
   serverTimestamp,
+  Timestamp,
   setDoc,
   updateDoc,
   where,
@@ -786,6 +787,19 @@ function weeklyId(branchId: string, weekStart: string) {
   return `${branchId}_${weekStart}`;
 }
 
+function sampleFile(fileId = "f1") {
+  return {
+    fileId,
+    name: `${fileId}.pdf`,
+    size: 1024,
+    contentType: "application/pdf",
+    storagePath: `branchWeeklyReports/x/2026-01-05/${fileId}__${fileId}.pdf`,
+    uploadedAt: Timestamp.fromDate(new Date("2026-01-06T01:00:00Z")),
+    uploadedByUid: MANAGER_UID,
+    uploadedByName: "테스트 지점",
+  };
+}
+
 function weeklyPayload(
   branchId: string,
   weekStart: string,
@@ -799,7 +813,8 @@ function weeklyPayload(
     branchName: "테스트 지점",
     weekStartDate: weekStart,
     weekEndDate: weekEnd,
-    content: "이번 주 운영 내용입니다.",
+    files: [],
+    fileHistory: [],
     status: "draft",
     updatedAt: serverTimestamp(),
     updatedBy: uid,
@@ -864,7 +879,7 @@ describe("branch weekly reports — 담당 지점만 작성·조회", () => {
     );
     await assertFails(
       updateDoc(doc(db, "branchWeeklyReports", weeklyId(OTHER_BRANCH_ID, week)), {
-        content: "남의 지점 수정 시도",
+        files: [sampleFile()],
         updatedAt: serverTimestamp(),
       })
     );
@@ -886,13 +901,13 @@ describe("branch weekly reports — 담당 지점만 작성·조회", () => {
     );
   });
 
-  test("빈 내용은 제출할 수 없다", async () => {
+  test("첨부파일이 없으면 제출할 수 없다", async () => {
     const db = authedDb(MANAGER_UID);
     await assertFails(
       setDoc(
         doc(db, "branchWeeklyReports", weeklyId(BRANCH_ID, "2026-03-02")),
         weeklyPayload(BRANCH_ID, "2026-03-02", "2026-03-08", MANAGER_UID, {
-          content: "",
+          files: [],
           status: "submitted",
           submittedAt: serverTimestamp(),
         })
@@ -911,6 +926,7 @@ describe("branch weekly reports — 담당 지점만 작성·조회", () => {
       setDoc(
         doc(db, "branchWeeklyReports", id),
         weeklyPayload(BRANCH_ID, week, weekEnd, MANAGER_UID, {
+          files: [sampleFile()],
           status: "submitted",
           submittedAt: new Date("2026-04-06T00:00:00Z"),
         })
@@ -921,6 +937,7 @@ describe("branch weekly reports — 담당 지점만 작성·조회", () => {
       await setDoc(
         doc(ctx.firestore(), "branchWeeklyReports", id),
         weeklyPayload(BRANCH_ID, week, weekEnd, MANAGER_UID, {
+          files: [sampleFile()],
           status: "submitted",
           submittedAt: new Date("2026-04-10T05:00:00Z"),
         })
@@ -930,7 +947,7 @@ describe("branch weekly reports — 담당 지점만 작성·조회", () => {
     // 최초 제출 시각을 바꾸려는 수정은 거부된다
     await assertFails(
       updateDoc(doc(db, "branchWeeklyReports", id), {
-        content: "수정본",
+        files: [sampleFile(), sampleFile("f2")],
         submittedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       })
@@ -945,7 +962,7 @@ describe("branch weekly reports — 담당 지점만 작성·조회", () => {
     // 제출 시각을 건드리지 않는 본문 수정은 허용된다
     await assertSucceeds(
       updateDoc(doc(db, "branchWeeklyReports", id), {
-        content: "수정본",
+        files: [sampleFile(), sampleFile("f2")],
         editCount: 1,
         updatedAt: serverTimestamp(),
         updatedBy: MANAGER_UID,

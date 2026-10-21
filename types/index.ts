@@ -565,7 +565,10 @@ export const SHIFT_SUBMISSION_STATE_LABEL: Record<ShiftSubmissionState, string> 
 
 export type WeeklyReportStatus = "draft" | "submitted";
 
-/** 자유형식 본문 최대 길이 — 수정 이력까지 포함해 Firestore 문서 한도(1MB) 안에 두기 위한 상한 */
+/**
+ * @deprecated 텍스트 방식이던 시절의 본문 길이 제한.
+ * 기존 문서를 읽을 때만 쓰인다.
+ */
 export const WEEKLY_CONTENT_MAX_LENGTH = 10000;
 
 /** 문서에 보관하는 수정 이력 최대 개수 (초과 시 오래된 것부터 버리고 총횟수는 editCount로 유지) */
@@ -583,13 +586,46 @@ export interface WeeklyReportEdit {
   previousContent: string;
 }
 
+/** 주간보고에 첨부된 파일 1개의 메타데이터. 실제 파일은 Firebase Storage 에 있다. */
+export interface WeeklyReportFile {
+  /** 파일 식별자 — Storage 경로에도 들어간다 */
+  fileId: string;
+  name: string;
+  size: number;
+  contentType: string;
+  /** Storage 경로. 다운로드 URL 은 저장하지 않고 조회 시점에 권한 확인 후 발급한다. */
+  storagePath: string;
+  uploadedAt: Timestamp;
+  uploadedByUid: string;
+  uploadedByName: string;
+}
+
+/** 파일 추가·삭제 이력 (교체는 삭제 + 추가로 남는다) */
+export interface WeeklyFileChange {
+  action: "added" | "removed";
+  fileId: string;
+  fileName: string;
+  at: Timestamp;
+  byUid: string;
+  byName: string;
+}
+
 export interface BranchWeeklyReport {
   id: string;
   branchId: string;
   branchName: string;
   weekStartDate: string; // YYYY-MM-DD (월요일, KST)
   weekEndDate: string;   // YYYY-MM-DD (일요일, KST)
-  content: string;       // 자유형식 텍스트
+  /** 첨부파일 목록 — 현재 주간보고의 본문에 해당한다 */
+  files: WeeklyReportFile[];
+  /** 파일 추가·삭제 이력 */
+  fileHistory: WeeklyFileChange[];
+  /**
+   * @deprecated 텍스트 방식이던 시절의 본문.
+   * 파일 첨부 방식으로 바뀐 뒤에는 새로 쓰지 않지만,
+   * 이전에 작성된 문서를 그대로 읽어 보여주기 위해 남겨둔다.
+   */
+  content?: string;
   status: WeeklyReportStatus;
   /** 최초 제출 시각 (serverTimestamp). 수정해도 바뀌지 않는다. */
   submittedAt?: Timestamp;
