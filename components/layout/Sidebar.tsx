@@ -16,6 +16,7 @@ import {
   DumbbellIcon,
   TrendingUpIcon,
   CalendarCheckIcon,
+  CalendarRangeIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -39,6 +40,7 @@ function isNavActive(pathname: string, href: string, exact?: boolean): boolean {
 const managerNav: NavItem[] = [
   { label: "홈", href: "/manager", icon: <HomeIcon className="w-4 h-4" />, exact: true },
   { label: "지점별 일일보고", href: "/manager/shift-reports", icon: <ClipboardListIcon className="w-4 h-4" /> },
+  { label: "주간보고", href: "/manager/weekly-reports", icon: <CalendarRangeIcon className="w-4 h-4" /> },
 ];
 
 const adminNav: NavItem[] = [
@@ -47,6 +49,7 @@ const adminNav: NavItem[] = [
   { label: "지점 내역", href: "/admin/branches", icon: <BuildingIcon className="w-4 h-4" /> },
   { label: "보고 관리", href: "/admin/reports", icon: <ClipboardListIcon className="w-4 h-4" /> },
   { label: "지점별 일일보고", href: "/admin/shift-reports", icon: <CalendarCheckIcon className="w-4 h-4" /> },
+  { label: "주간보고", href: "/admin/weekly-reports", icon: <CalendarRangeIcon className="w-4 h-4" /> },
   { label: "운영 이슈", href: "/admin/issues", icon: <AlertCircleIcon className="w-4 h-4" /> },
   { label: "프로모션 관리", href: "/admin/promotions", icon: <MegaphoneIcon className="w-4 h-4" /> },
   { label: "회원관리", href: "/admin/members", icon: <UsersIcon className="w-4 h-4" /> },

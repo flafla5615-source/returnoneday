@@ -552,3 +552,63 @@ export const SHIFT_SUBMISSION_STATE_LABEL: Record<ShiftSubmissionState, string> 
   pending: "작성 전",
   missing: "미제출",
 };
+
+// ─── branchWeeklyReports (주간보고) ──────────────────────────────────────────
+// 오전/마감 일일보고(branchShiftReports)와는 별개인 신규 컬렉션이다.
+// dailyReports / promotions / KPI 와도 섞지 않는다.
+//
+// Doc ID: {branchId}_{weekStartDate}
+//   → 같은 지점·같은 주차는 문서가 하나뿐이라 중복 생성이 구조적으로 불가능하다.
+//
+// 제출 마감시간이 아직 없어서 정시/지연 개념이 없다.
+// 상태는 "미작성 / 임시저장 / 제출" 세 가지뿐이다.
+
+export type WeeklyReportStatus = "draft" | "submitted";
+
+/** 자유형식 본문 최대 길이 — 수정 이력까지 포함해 Firestore 문서 한도(1MB) 안에 두기 위한 상한 */
+export const WEEKLY_CONTENT_MAX_LENGTH = 10000;
+
+/** 문서에 보관하는 수정 이력 최대 개수 (초과 시 오래된 것부터 버리고 총횟수는 editCount로 유지) */
+export const WEEKLY_EDIT_HISTORY_LIMIT = 20;
+
+export interface WeeklyReportEdit {
+  /**
+   * 이 버전이 저장된 서버 시각.
+   * Firestore 는 배열 원소에 serverTimestamp() 를 넣을 수 없어서,
+   * 수정 시점에 문서에 이미 저장돼 있던 updatedAt(서버 시각)을 복사해 넣는다.
+   */
+  previousVersionAt?: Timestamp;
+  editedByUid: string;
+  editedByName: string;
+  previousContent: string;
+}
+
+export interface BranchWeeklyReport {
+  id: string;
+  branchId: string;
+  branchName: string;
+  weekStartDate: string; // YYYY-MM-DD (월요일, KST)
+  weekEndDate: string;   // YYYY-MM-DD (일요일, KST)
+  content: string;       // 자유형식 텍스트
+  status: WeeklyReportStatus;
+  /** 최초 제출 시각 (serverTimestamp). 수정해도 바뀌지 않는다. */
+  submittedAt?: Timestamp;
+  submittedBy?: string;
+  submittedByName?: string;
+  updatedAt: Timestamp;
+  updatedBy: string;
+  updatedByName: string;
+  createdAt: Timestamp;
+  /** 제출 이후 수정 횟수 (이력 배열이 잘려도 총횟수는 유지된다) */
+  editCount: number;
+  editHistory: WeeklyReportEdit[];
+}
+
+/** 주차별 작성 상태 — 저장값이 아니라 문서 상태로 조회 시 판단한다. */
+export type WeeklyReportState = "submitted" | "draft" | "none";
+
+export const WEEKLY_STATE_LABEL: Record<WeeklyReportState, string> = {
+  submitted: "제출 완료",
+  draft: "임시저장",
+  none: "미작성",
+};

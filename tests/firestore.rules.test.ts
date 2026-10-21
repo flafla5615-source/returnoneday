@@ -777,3 +777,197 @@ describe("branch shift reports — 담당 지점만 작성·조회", () => {
     );
   });
 });
+
+/* ── branchWeeklyReports (주간보고) ──────────────────────────────────────────
+   담당 지점만 작성·조회되는지, 미래 주차가 막히는지, 최초 제출 시각이
+   보존되는지를 규칙 수준에서 확인한다.                                        */
+
+function weeklyId(branchId: string, weekStart: string) {
+  return `${branchId}_${weekStart}`;
+}
+
+function weeklyPayload(
+  branchId: string,
+  weekStart: string,
+  weekEnd: string,
+  uid: string,
+  overrides: Record<string, unknown> = {}
+) {
+  return {
+    id: weeklyId(branchId, weekStart),
+    branchId,
+    branchName: "테스트 지점",
+    weekStartDate: weekStart,
+    weekEndDate: weekEnd,
+    content: "이번 주 운영 내용입니다.",
+    status: "draft",
+    updatedAt: serverTimestamp(),
+    updatedBy: uid,
+    updatedByName: "테스트 지점",
+    createdAt: serverTimestamp(),
+    editCount: 0,
+    editHistory: [],
+    ...overrides,
+  };
+}
+
+describe("branch weekly reports — 담당 지점만 작성·조회", () => {
+  const PAST_WEEK = "2026-01-05"; // 월요일
+  const PAST_WEEK_END = "2026-01-11";
+  const FUTURE_WEEK = "2099-01-04";
+  const FUTURE_WEEK_END = "2099-01-10";
+
+  test("담당 지점의 지난 주차 보고를 작성할 수 있다", async () => {
+    const db = authedDb(MANAGER_UID);
+    await assertSucceeds(
+      setDoc(
+        doc(db, "branchWeeklyReports", weeklyId(BRANCH_ID, PAST_WEEK)),
+        weeklyPayload(BRANCH_ID, PAST_WEEK, PAST_WEEK_END, MANAGER_UID)
+      )
+    );
+  });
+
+  test("미래 주차는 작성할 수 없다", async () => {
+    const db = authedDb(MANAGER_UID);
+    await assertFails(
+      setDoc(
+        doc(db, "branchWeeklyReports", weeklyId(BRANCH_ID, FUTURE_WEEK)),
+        weeklyPayload(BRANCH_ID, FUTURE_WEEK, FUTURE_WEEK_END, MANAGER_UID)
+      )
+    );
+  });
+
+  test("타 지점 주간보고는 작성·조회·수정할 수 없다", async () => {
+    const week = "2026-02-02";
+    const weekEnd = "2026-02-08";
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(
+        doc(ctx.firestore(), "branchWeeklyReports", weeklyId(OTHER_BRANCH_ID, week)),
+        weeklyPayload(OTHER_BRANCH_ID, week, weekEnd, OTHER_MANAGER_UID)
+      );
+    });
+
+    const db = authedDb(MANAGER_UID);
+    await assertFails(
+      setDoc(
+        doc(db, "branchWeeklyReports", weeklyId(OTHER_BRANCH_ID, "2026-02-09")),
+        weeklyPayload(OTHER_BRANCH_ID, "2026-02-09", "2026-02-15", MANAGER_UID)
+      )
+    );
+    await assertFails(
+      getDoc(doc(db, "branchWeeklyReports", weeklyId(OTHER_BRANCH_ID, week)))
+    );
+    await assertFails(
+      getDocs(
+        query(collection(db, "branchWeeklyReports"), where("branchId", "==", OTHER_BRANCH_ID))
+      )
+    );
+    await assertFails(
+      updateDoc(doc(db, "branchWeeklyReports", weeklyId(OTHER_BRANCH_ID, week)), {
+        content: "남의 지점 수정 시도",
+        updatedAt: serverTimestamp(),
+      })
+    );
+    // 자기 지점 목록 조회는 된다
+    await assertSucceeds(
+      getDocs(query(collection(db, "branchWeeklyReports"), where("branchId", "==", BRANCH_ID)))
+    );
+  });
+
+  test("문서 ID가 지점·주차와 어긋나면 거부된다 (중복 생성 방지)", async () => {
+    const db = authedDb(MANAGER_UID);
+    await assertFails(
+      setDoc(
+        doc(db, "branchWeeklyReports", `${BRANCH_ID}_${PAST_WEEK}_2`),
+        weeklyPayload(BRANCH_ID, PAST_WEEK, PAST_WEEK_END, MANAGER_UID, {
+          id: `${BRANCH_ID}_${PAST_WEEK}_2`,
+        })
+      )
+    );
+  });
+
+  test("빈 내용은 제출할 수 없다", async () => {
+    const db = authedDb(MANAGER_UID);
+    await assertFails(
+      setDoc(
+        doc(db, "branchWeeklyReports", weeklyId(BRANCH_ID, "2026-03-02")),
+        weeklyPayload(BRANCH_ID, "2026-03-02", "2026-03-08", MANAGER_UID, {
+          content: "",
+          status: "submitted",
+          submittedAt: serverTimestamp(),
+        })
+      )
+    );
+  });
+
+  test("제출 시각은 서버 시각으로만 기록되고, 이후 수정해도 유지된다", async () => {
+    const week = "2026-04-06";
+    const weekEnd = "2026-04-12";
+    const id = weeklyId(BRANCH_ID, week);
+    const db = authedDb(MANAGER_UID);
+
+    // 임의 시각으로 제출 시각을 위조할 수 없다
+    await assertFails(
+      setDoc(
+        doc(db, "branchWeeklyReports", id),
+        weeklyPayload(BRANCH_ID, week, weekEnd, MANAGER_UID, {
+          status: "submitted",
+          submittedAt: new Date("2026-04-06T00:00:00Z"),
+        })
+      )
+    );
+
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(
+        doc(ctx.firestore(), "branchWeeklyReports", id),
+        weeklyPayload(BRANCH_ID, week, weekEnd, MANAGER_UID, {
+          status: "submitted",
+          submittedAt: new Date("2026-04-10T05:00:00Z"),
+        })
+      );
+    });
+
+    // 최초 제출 시각을 바꾸려는 수정은 거부된다
+    await assertFails(
+      updateDoc(doc(db, "branchWeeklyReports", id), {
+        content: "수정본",
+        submittedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    );
+    // 제출된 보고를 임시저장으로 되돌릴 수 없다
+    await assertFails(
+      updateDoc(doc(db, "branchWeeklyReports", id), {
+        status: "draft",
+        updatedAt: serverTimestamp(),
+      })
+    );
+    // 제출 시각을 건드리지 않는 본문 수정은 허용된다
+    await assertSucceeds(
+      updateDoc(doc(db, "branchWeeklyReports", id), {
+        content: "수정본",
+        editCount: 1,
+        updatedAt: serverTimestamp(),
+        updatedBy: MANAGER_UID,
+      })
+    );
+  });
+
+  test("본사(admin)는 전 지점 주간보고를 조회할 수 있다", async () => {
+    const db = authedDb(ADMIN_UID);
+    await assertSucceeds(getDocs(collection(db, "branchWeeklyReports")));
+  });
+
+  test("로그인하지 않으면 접근할 수 없다", async () => {
+    const db = unauthDb();
+    await assertFails(
+      getDoc(doc(db, "branchWeeklyReports", weeklyId(BRANCH_ID, PAST_WEEK)))
+    );
+    await assertFails(
+      setDoc(
+        doc(db, "branchWeeklyReports", weeklyId(BRANCH_ID, "2026-05-04")),
+        weeklyPayload(BRANCH_ID, "2026-05-04", "2026-05-10", "anonymous")
+      )
+    );
+  });
+});

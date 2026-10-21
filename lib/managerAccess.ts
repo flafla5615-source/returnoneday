@@ -11,7 +11,7 @@
 const ALLOWED_EXACT = ["/manager"];
 
 /** 이 경로이거나 그 하위 경로일 때 허용 */
-const ALLOWED_PREFIX = ["/manager/shift-reports"];
+const ALLOWED_PREFIX = ["/manager/shift-reports", "/manager/weekly-reports"];
 
 export function isAllowedManagerPath(pathname: string): boolean {
   // 끝의 슬래시는 무시한다 ("/manager/" 도 홈으로 본다)

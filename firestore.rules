@@ -626,6 +626,93 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ─── branchWeeklyReports (주간보고) ─────────────────────────────────────
+    // Doc ID: {branchId}_{weekStartDate}  (weekStartDate 는 월요일)
+    //   → 같은 지점·같은 주차의 문서가 하나뿐이라 중복 생성이 구조적으로 불가능하다.
+    // 작성: 담당 지점의 branch_manager (미래 주차 제외).
+    // 조회: admin 전 지점, branch_manager 담당 지점.
+    //
+    // 제출 마감시간이 없어 지연 판정은 하지 않는다. 다만 submittedAt 은
+    // 클라이언트가 임의 시각으로 쓰지 못하게 request.time 과 일치하는지 검사한다.
+    function validWeeklyReportData(weeklyId, data) {
+      return data.keys().hasOnly([
+          'id', 'branchId', 'branchName', 'weekStartDate', 'weekEndDate',
+          'content', 'status', 'submittedAt', 'submittedBy', 'submittedByName',
+          'updatedAt', 'updatedBy', 'updatedByName',
+          'createdAt', 'editCount', 'editHistory'
+        ])
+        && data.id == weeklyId
+        && data.branchId is string && data.branchId.size() > 0
+        && data.branchName is string
+        && data.weekStartDate is string && data.weekStartDate.size() == 10
+        && data.weekEndDate is string && data.weekEndDate.size() == 10
+        && data.weekStartDate < data.weekEndDate
+        && weeklyId == data.branchId + '_' + data.weekStartDate
+        && data.content is string && data.content.size() <= 10000
+        && data.status in ['draft', 'submitted']
+        && data.updatedBy is string && data.updatedBy.size() > 0
+        && data.editCount is int && data.editCount >= 0
+        && data.editHistory is list && data.editHistory.size() <= 20
+        && !('password' in data);
+    }
+
+    function weeklySubmittedAtIsServerTime(data) {
+      return !('submittedAt' in data.keys()) || data.submittedAt == request.time;
+    }
+
+    // 미래 주차 차단 — 주 시작일이 오늘(KST)보다 뒤면 작성할 수 없다.
+    function isNotFutureWeek(weekStartDate) {
+      return reportDateDayIndex(weekStartDate) <= kstTodayDayIndex();
+    }
+
+    match /branchWeeklyReports/{weeklyId} {
+      allow get: if isAdmin() ||
+        (isActiveManager()
+          && (!exists(/databases/$(database)/documents/branchWeeklyReports/$(weeklyId))
+            || resource.data.branchId in getUserData().branchIds));
+
+      allow list: if isAdmin() ||
+        (isActiveManager() && resource.data.branchId in getUserData().branchIds);
+
+      allow create: if validWeeklyReportData(weeklyId, request.resource.data)
+        && request.resource.data.editCount == 0
+        && request.resource.data.editHistory.size() == 0
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && weeklySubmittedAtIsServerTime(request.resource.data)
+        && (request.resource.data.status != 'submitted'
+          || (request.resource.data.submittedAt == request.time
+            && request.resource.data.content.size() > 0))
+        && (isAdmin() ||
+          (isActiveManager()
+            && request.resource.data.branchId in getUserData().branchIds
+            && request.resource.data.updatedBy == uid()
+            && isNotFutureWeek(request.resource.data.weekStartDate)));
+
+      // 지점·주차·최초 생성 시각은 바뀌지 않는다.
+      // 제출된 보고를 임시저장으로 되돌릴 수 없고, 수정 횟수는 줄어들 수 없다.
+      allow update: if validWeeklyReportData(weeklyId, request.resource.data)
+        && request.resource.data.branchId == resource.data.branchId
+        && request.resource.data.weekStartDate == resource.data.weekStartDate
+        && request.resource.data.weekEndDate == resource.data.weekEndDate
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.editCount >= resource.data.editCount
+        && !(resource.data.status == 'submitted' && request.resource.data.status == 'draft')
+        && (request.resource.data.status != 'submitted'
+          || request.resource.data.content.size() > 0)
+        && (!('submittedAt' in resource.data.keys())
+          ? weeklySubmittedAtIsServerTime(request.resource.data)
+          : request.resource.data.submittedAt == resource.data.submittedAt)
+        && (isAdmin() ||
+          (isActiveManager()
+            && resource.data.branchId in getUserData().branchIds
+            && request.resource.data.updatedBy == uid()
+            && isNotFutureWeek(resource.data.weekStartDate)));
+
+      allow delete: if isAdmin();
+    }
+
     // ─── auditLogs ────────────────────────────────────────────────────────
     match /auditLogs/{logId} {
       allow read: if isAdmin();

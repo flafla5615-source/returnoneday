@@ -8,6 +8,7 @@ import {
   AlertCircleIcon,
   UsersIcon,
   CalendarCheckIcon,
+  CalendarRangeIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -20,12 +21,14 @@ function isNavActive(pathname: string, href: string, exact?: boolean): boolean {
 const managerMobileNav = [
   { label: "홈", href: "/manager", icon: HomeIcon, exact: true },
   { label: "일일보고", href: "/manager/shift-reports", icon: ClipboardListIcon },
+  { label: "주간보고", href: "/manager/weekly-reports", icon: CalendarRangeIcon },
 ];
 
 const adminMobileNav = [
   { label: "현황", href: "/admin", icon: HomeIcon, exact: true },
   { label: "보고", href: "/admin/reports", icon: ClipboardListIcon },
   { label: "일일보고", href: "/admin/shift-reports", icon: CalendarCheckIcon },
+  { label: "주간보고", href: "/admin/weekly-reports", icon: CalendarRangeIcon },
   { label: "회원", href: "/admin/members", icon: UsersIcon },
   { label: "이슈", href: "/admin/issues", icon: AlertCircleIcon },
   { label: "사용자", href: "/admin/users", icon: UsersIcon },
