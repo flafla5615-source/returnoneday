@@ -6,38 +6,41 @@ rules_version = '2';
 // 역할·담당 지점 판단은 Firestore 의 users 문서를 읽어서 한다
 // (Firestore 규칙과 같은 기준을 쓰기 위해서다).
 //
+// 설계 메모
+//   1. firestore.get 호출을 최소로 줄인다.
+//      규칙 엔진은 같은 경로의 get 을 한 번만 실제로 수행하지만,
+//      exists + get 을 따로 부르면 호출이 늘고 실패 지점도 늘어난다.
+//      문서가 없으면 get 결과 접근에서 거부되므로 exists 검사는 필요 없다.
+//   2. create/update 와 delete 를 나눈다.
+//      write 하나로 묶으면 삭제 요청에서도 contentType·size 를 보게 되는데,
+//      삭제에는 request.resource 가 없어 엉뚱하게 거부될 수 있다.
+//   3. size 검사는 상한만 본다.
+//      이어올리기(resumable) 업로드는 단계에 따라 size 가 아직 안 채워질 수 있어
+//      "0보다 크다"를 요구하면 정상 업로드가 거부될 수 있다.
+//
 // 다운로드 URL 토큰에 대하여
 //   getDownloadURL() 이 돌려주는 URL 은 토큰이 붙어 있어 그 자체로는
 //   인증 없이 열린다. 그래서 URL 을 Firestore 에 저장하지 않고,
 //   아래 read 규칙을 통과한 사용자에게만 조회 시점에 발급한다.
-//   토큰을 무효화하려면 콘솔에서 해당 파일의 토큰을 재발급하면 된다.
 
 service firebase.storage {
   match /b/{bucket}/o {
 
-    function isAuth() {
-      return request.auth != null;
-    }
-
-    function userData() {
+    function profile() {
       return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
     }
 
-    function hasProfile() {
-      return isAuth() &&
-        firestore.exists(/databases/(default)/documents/users/$(request.auth.uid));
-    }
-
     function isAdmin() {
-      return hasProfile() && userData().role == 'admin' && userData().status == 'active';
-    }
-
-    function isActiveManager() {
-      return hasProfile() && userData().role == 'branch_manager' && userData().status == 'active';
+      return request.auth != null
+        && profile().role == 'admin'
+        && profile().status == 'active';
     }
 
     function isManagerOfBranch(branchId) {
-      return isActiveManager() && branchId in userData().branchIds;
+      return request.auth != null
+        && profile().role == 'branch_manager'
+        && profile().status == 'active'
+        && branchId in profile().branchIds;
     }
 
     // 업로드 허용 형식 — 클라이언트가 확장자·시그니처 검증 후
@@ -52,7 +55,7 @@ service firebase.storage {
     }
 
     function withinSizeLimit() {
-      return request.resource.size > 0 && request.resource.size <= 20 * 1024 * 1024;
+      return request.resource.size <= 20 * 1024 * 1024;
     }
 
     // ─── 주간보고 첨부파일 ───────────────────────────────────────────────
@@ -61,8 +64,9 @@ service firebase.storage {
       // 본사는 전 지점, 지점장은 담당 지점만 조회·다운로드
       allow read: if isAdmin() || isManagerOfBranch(branchId);
 
-      // 업로드는 담당 지점장만. 본사는 조회 전용이라 쓰지 않는다.
-      allow write: if isManagerOfBranch(branchId)
+      // 업로드·교체는 담당 지점장만.
+      // 본사는 보고를 대신 쓰지 않으므로 조회·삭제 권한만 갖는다.
+      allow create, update: if isManagerOfBranch(branchId)
         && allowedContentType()
         && withinSizeLimit();
 

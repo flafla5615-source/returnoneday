@@ -13,6 +13,7 @@ import {
   uploadWeeklyFile,
 } from "@/services/weeklyReports";
 import { describeStorageError, STORAGE_SETUP_GUIDE } from "@/lib/storageErrors";
+import { checkUploadPermission } from "@/lib/uploadPermission";
 import {
   currentWeekStart,
   isWritableWeek,
@@ -279,13 +280,20 @@ export default function ManagerWeeklyReportsPage() {
       const userMessage = (err as Error & { userMessage?: string }).userMessage;
       const code = (err as { code?: string })?.code;
       const info = describeStorageError(code);
+      // 규칙이 거부했는데 선검사는 통과했다면, 프로필과 규칙이 어긋난 것이다.
+      // 어느 쪽을 봐야 하는지 알 수 있게 구체적으로 적는다.
+      const unauthorizedHint =
+        code === "storage/unauthorized" && selectedBranch
+          ? `담당 지점(${selectedBranch.name})으로 등록돼 있지만 서버가 거부했습니다. ` +
+            "본사 관리자에게 '계정 점검' 화면 확인을 요청해주세요."
+          : null;
       setJobs((prev) =>
         prev.map((j) =>
           j.key === key
             ? {
                 ...j,
                 status: "failed",
-                message: userMessage ?? info.message,
+                message: userMessage ?? unauthorizedHint ?? info.message,
                 code: userMessage ? undefined : code,
                 retryable: userMessage ? false : info.retryable,
               }
@@ -308,6 +316,20 @@ export default function ManagerWeeklyReportsPage() {
     if (!selected || !profile || !selectedBranch) return;
     setError(null);
     setNotice(null);
+
+    // 규칙과 같은 조건을 미리 본다. 막히면 storage/unauthorized 대신
+    // 실제 사유(담당 지점 아님/승인 대기 등)를 바로 알려준다.
+    const permission = checkUploadPermission({
+      profile,
+      branchId: selectedBranch.id,
+      branchName: selectedBranch.name,
+      branchNameOf: (id) => branches.find((b) => b.id === id)?.name ?? id,
+    });
+    if (!permission.allowed) {
+      setError(permission.message ?? "업로드 권한이 없습니다.");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
 
     // 한 번에 여러 개를 고르면 순서대로 올린다 (진행률을 개별 표시)
     for (const file of Array.from(selected)) {

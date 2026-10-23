@@ -17,6 +17,7 @@ import {
   TrendingUpIcon,
   CalendarCheckIcon,
   CalendarRangeIcon,
+  ShieldCheckIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -54,6 +55,7 @@ const adminNav: NavItem[] = [
   { label: "프로모션 관리", href: "/admin/promotions", icon: <MegaphoneIcon className="w-4 h-4" /> },
   { label: "회원관리", href: "/admin/members", icon: <UsersIcon className="w-4 h-4" /> },
   { label: "사용자 관리", href: "/admin/users", icon: <UsersIcon className="w-4 h-4" /> },
+  { label: "계정 점검", href: "/admin/account-check", icon: <ShieldCheckIcon className="w-4 h-4" /> },
   { label: "트레이너 실적", href: "/admin/trainers", icon: <BarChart2Icon className="w-4 h-4" />, exact: true },
   { label: "트레이너 관리", href: "/admin/trainers/manage", icon: <DumbbellIcon className="w-4 h-4" /> },
   { label: "데이터 내보내기", href: "/admin/export", icon: <DownloadIcon className="w-4 h-4" /> },
