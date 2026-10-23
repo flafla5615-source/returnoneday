@@ -6,41 +6,43 @@ rules_version = '2';
 // 역할·담당 지점 판단은 Firestore 의 users 문서를 읽어서 한다
 // (Firestore 규칙과 같은 기준을 쓰기 위해서다).
 //
-// 설계 메모
-//   1. firestore.get 호출을 최소로 줄인다.
-//      규칙 엔진은 같은 경로의 get 을 한 번만 실제로 수행하지만,
-//      exists + get 을 따로 부르면 호출이 늘고 실패 지점도 늘어난다.
-//      문서가 없으면 get 결과 접근에서 거부되므로 exists 검사는 필요 없다.
-//   2. create/update 와 delete 를 나눈다.
-//      write 하나로 묶으면 삭제 요청에서도 contentType·size 를 보게 되는데,
-//      삭제에는 request.resource 가 없어 엉뚱하게 거부될 수 있다.
-//   3. size 검사는 상한만 본다.
-//      이어올리기(resumable) 업로드는 단계에 따라 size 가 아직 안 채워질 수 있어
-//      "0보다 크다"를 요구하면 정상 업로드가 거부될 수 있다.
+// ⚠ 교차 서비스(Storage → Firestore) 호출 한도
+//    "Maximum number of firestore.exists() and firestore.get() calls per request: 2.
+//     Exceeding this limit results in a permission denied error."
+//
+//    이 한도를 넘으면 프로필이 멀쩡해도 무조건 거부된다.
+//    그래서 평가 한 번에 firestore.get 을 정확히 한 번만 호출한다.
+//    role / status / branchIds 를 각각 조회하면 3회가 되어 한도를 넘는다.
+//    let 으로 한 번 읽어 세 가지를 모두 거기서 본다.
+//
+// ⚠ 이 기능은 IAM 권한이 있어야 동작한다.
+//    Storage 서비스 계정(service-<프로젝트번호>@gcp-sa-firebasestorage.iam.gserviceaccount.com)에
+//    "Firebase Rules Firestore Service Agent" 역할이 필요하다.
+//    없으면 firestore.get 이 실패해 역시 전부 거부된다.
 //
 // 다운로드 URL 토큰에 대하여
-//   getDownloadURL() 이 돌려주는 URL 은 토큰이 붙어 있어 그 자체로는
-//   인증 없이 열린다. 그래서 URL 을 Firestore 에 저장하지 않고,
-//   아래 read 규칙을 통과한 사용자에게만 조회 시점에 발급한다.
+//    getDownloadURL() 이 돌려주는 URL 은 토큰이 붙어 있어 그 자체로는 인증 없이 열린다.
+//    그래서 URL 을 Firestore 에 저장하지 않고, 아래 read 규칙을 통과한 사용자에게만
+//    조회 시점에 발급한다.
 
 service firebase.storage {
   match /b/{bucket}/o {
 
-    function profile() {
-      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+    // 조회 권한 — firestore.get 1회.
+    // 본사(admin)는 전 지점, 지점장은 담당 지점만.
+    function canRead(branchId) {
+      let p = firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+      return p.status == 'active'
+        && (p.role == 'admin'
+          || (p.role == 'branch_manager' && branchId in p.branchIds));
     }
 
-    function isAdmin() {
-      return request.auth != null
-        && profile().role == 'admin'
-        && profile().status == 'active';
-    }
-
-    function isManagerOfBranch(branchId) {
-      return request.auth != null
-        && profile().role == 'branch_manager'
-        && profile().status == 'active'
-        && branchId in profile().branchIds;
+    // 업로드 권한 — firestore.get 1회. 담당 지점장만.
+    function canWrite(branchId) {
+      let p = firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+      return p.role == 'branch_manager'
+        && p.status == 'active'
+        && branchId in p.branchIds;
     }
 
     // 업로드 허용 형식 — 클라이언트가 확장자·시그니처 검증 후
@@ -54,6 +56,7 @@ service firebase.storage {
       ];
     }
 
+    // 이어올리기 단계에서 size 가 아직 안 채워질 수 있어 상한만 본다.
     function withinSizeLimit() {
       return request.resource.size <= 20 * 1024 * 1024;
     }
@@ -61,17 +64,17 @@ service firebase.storage {
     // ─── 주간보고 첨부파일 ───────────────────────────────────────────────
     // 경로: branchWeeklyReports/{branchId}/{weekStartDate}/{fileName}
     match /branchWeeklyReports/{branchId}/{weekStartDate}/{fileName} {
-      // 본사는 전 지점, 지점장은 담당 지점만 조회·다운로드
-      allow read: if isAdmin() || isManagerOfBranch(branchId);
+      allow read: if request.auth != null && canRead(branchId);
 
-      // 업로드·교체는 담당 지점장만.
-      // 본사는 보고를 대신 쓰지 않으므로 조회·삭제 권한만 갖는다.
-      allow create, update: if isManagerOfBranch(branchId)
+      // create/update 와 delete 를 나눈다. 삭제 요청에는 request.resource 가 없어
+      // contentType·size 검사에 걸려 엉뚱하게 거부될 수 있다.
+      allow create, update: if request.auth != null
+        && canWrite(branchId)
         && allowedContentType()
         && withinSizeLimit();
 
       // 삭제는 담당 지점장 또는 본사(정리 목적)
-      allow delete: if isAdmin() || isManagerOfBranch(branchId);
+      allow delete: if request.auth != null && canRead(branchId);
     }
 
     // 그 외 모든 경로 차단

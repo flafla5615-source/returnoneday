@@ -5,6 +5,7 @@ import { getAllBranchesIncludingInactive } from "@/services/branches";
 import { getAllUsers, linkExistingAuthAccount } from "@/services/users";
 import LoadingState from "@/components/common/LoadingState";
 import { checkUploadPermission } from "@/lib/uploadPermission";
+import { STORAGE_CROSS_SERVICE_GUIDE } from "@/lib/storageErrors";
 import { cn } from "@/lib/utils";
 import type { Branch, UserProfile } from "@/types";
 import { AlertTriangleIcon, CheckCircle2Icon, RefreshCwIcon, WrenchIcon } from "lucide-react";
@@ -260,6 +261,49 @@ export default function AdminAccountCheckPage() {
           </div>
         ))}
       </div>
+
+      {/* 프로필이 정상인데도 storage/unauthorized 가 나면 여기부터 확인한다 */}
+      <details className="rounded-xl border border-gray-200 bg-white p-4">
+        <summary className="cursor-pointer text-sm font-semibold text-gray-800">
+          담당 지점이 맞는데 업로드가 거부될 때 (storage/unauthorized)
+        </summary>
+        <div className="mt-3 space-y-2 text-xs text-gray-600">
+          <p>
+            Storage 보안 규칙은 Firestore 의 users 문서를 읽어 담당 지점을 판단합니다. 그 읽기
+            권한(교차 서비스 권한)이 프로젝트에 없으면, 프로필이 정상이어도 모든 업로드가
+            거부됩니다. 규칙을 비대화형으로 배포하면 권한 연결 과정이 건너뛰어질 수 있습니다.
+          </p>
+          <p className="font-medium text-gray-700">가장 간단한 해결: 터미널에서 직접 배포</p>
+          <pre className="overflow-x-auto rounded bg-gray-900 px-3 py-2 text-[11px] text-gray-100">
+            {STORAGE_CROSS_SERVICE_GUIDE.cliCommand}
+          </pre>
+          <p>권한이 없으면 CLI 가 연결 여부를 물어봅니다. 승인하면 바로 적용됩니다.</p>
+
+          <p className="mt-2 font-medium text-gray-700">직접 확인하려면 (IAM)</p>
+          <ul className="list-disc space-y-0.5 pl-4">
+            <li>
+              계정:{" "}
+              <span className="break-all font-mono text-[11px]">
+                {STORAGE_CROSS_SERVICE_GUIDE.serviceAccount}
+              </span>
+            </li>
+            <li>
+              필요한 역할:{" "}
+              <span className="font-mono text-[11px]">{STORAGE_CROSS_SERVICE_GUIDE.role}</span>
+            </li>
+            <li>IAM 화면에서 &ldquo;Google 제공 역할 부여 포함&rdquo;을 켜야 보입니다</li>
+          </ul>
+          <a
+            href={STORAGE_CROSS_SERVICE_GUIDE.iamUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+          >
+            IAM 화면 열기
+          </a>
+          <p className="mt-2 text-[11px] text-gray-400">{STORAGE_CROSS_SERVICE_GUIDE.note}</p>
+        </div>
+      </details>
 
       {/* 다른 PC 가 옛 버전을 캐시하고 있는지 확인용 — 각 PC 에서 이 값을 비교한다 */}
       <p className="text-center font-mono text-[11px] text-gray-400">

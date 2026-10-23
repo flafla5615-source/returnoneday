@@ -43,7 +43,9 @@ export function describeStorageError(code: string | undefined | null): StorageEr
     case "storage/unauthorized":
       return {
         message:
-          "업로드 권한이 없습니다. 담당 지점이 맞는지, 보안 규칙이 배포됐는지 확인해주세요.",
+          "서버가 업로드를 거부했습니다. 담당 지점은 맞는데 이 오류가 나면 " +
+          "보안 규칙이 Firestore 를 읽을 권한(교차 서비스 권한)이 없는 경우입니다. " +
+          "본사 관리자에게 '계정 점검' 화면의 안내를 확인해달라고 요청해주세요.",
         retryable: false,
         needsSetup: true,
       };
@@ -91,6 +93,24 @@ export function describeStorageError(code: string | undefined | null): StorageEr
     needsSetup: false,
   };
 }
+
+/**
+ * Storage 규칙이 Firestore 를 읽으려면 프로젝트에 IAM 권한이 하나 필요하다.
+ * 이 권한이 없으면 firestore.get 이 실패해 모든 업로드가 거부된다
+ * (프로필이 정상이어도 storage/unauthorized 가 난다).
+ *
+ * 비대화형 CLI 로 규칙을 배포하면 권한 연결 프롬프트가 건너뛰어질 수 있다.
+ */
+export const STORAGE_CROSS_SERVICE_GUIDE = {
+  projectNumber: "766935285887",
+  serviceAccount: "service-766935285887@gcp-sa-firebasestorage.iam.gserviceaccount.com",
+  role: "Firebase Rules Firestore Service Agent",
+  iamUrl: "https://console.cloud.google.com/iam-admin/iam?project=returnoneday",
+  /** 가장 간단한 방법: 본인 터미널에서 규칙을 배포하면 CLI 가 권한 연결을 물어본다 */
+  cliCommand: "npx firebase-tools deploy --only storage --project returnoneday",
+  note:
+    "교차 서비스 호출은 평가당 2회까지만 허용됩니다. 규칙은 1회만 호출하도록 맞춰져 있습니다.",
+} as const;
 
 /** 관리자가 Storage 를 켜야 하는 경우에 보여줄 구체적인 안내 */
 export const STORAGE_SETUP_GUIDE = {
