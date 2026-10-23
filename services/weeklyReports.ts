@@ -17,7 +17,6 @@ import {
   ref as storageRef,
   uploadBytesResumable,
 } from "firebase/storage";
-import { looksLikeWorkingBucket } from "@/lib/storageErrors";
 import { db, storage } from "@/lib/firebase";
 import type {
   BranchWeeklyReport,
@@ -336,51 +335,54 @@ export async function submitWeeklyReport(params: {
 
 /* ── Storage 사용 가능 여부 확인 ──────────────────────────────────────────────
    버킷이 없으면 업로드가 재시도만 반복하다 늦게 실패한다. 화면에서는 "0%" 로
-   멈춘 것처럼 보여 원인을 알 수 없다. 그래서 업로드를 걸기 전에 한 번 확인해서
-   설정 문제라면 즉시 알려준다.
+   멈춘 것처럼 보여 원인을 알 수 없다. 그래서 업로드 전에 먼저 확인한다.
 
-   존재하지 않는 경로를 조회해 오류 코드로 판단한다.
-     object-not-found / unauthorized → 버킷 정상 (파일이 없거나 규칙이 막은 것)
-     그 밖의 코드                     → 버킷 자체를 쓸 수 없는 상태 */
+   확인 방법
+     Storage REST 목록 엔드포인트를 그냥 fetch 한다. 단순 GET 이라 preflight 가
+     없고 1초 안에 답이 온다 (SDK 는 같은 상황에서 30초까지 재시도한다).
+       404        → 버킷이 존재하지 않음 (설정 필요)
+       그 외 응답 → 버킷은 있음. 권한은 규칙이 판단할 몫이라 여기서는 통과로 본다
+       네트워크 오류 → 판단 보류 (오프라인일 수도 있으므로 단정하지 않는다) */
 
 export type StorageAvailability =
   | { available: true }
   | { available: false; code: string; timedOut: boolean };
 
-/** 확인이 이보다 오래 걸리면 기다리지 않는다 (SDK 재시도는 30초까지 간다) */
+/** 확인이 이보다 오래 걸리면 기다리지 않는다 */
 const STORAGE_PROBE_TIMEOUT_MS = 8000;
 
-/**
- * timeoutMs 를 0 으로 주면 기다릴 수 있는 만큼 기다려 확정 답을 받는다.
- * 화면은 먼저 짧은 제한으로 물어 빠르게 안내하고,
- * 그 뒤 제한 없이 한 번 더 물어 확정되면 안내를 갱신한다.
- */
+function bucketName(): string {
+  // SDK 가 실제로 쓰는 버킷을 그대로 본다 (환경변수와 어긋나는 경우를 피한다)
+  return storageRef(storage, "/").bucket;
+}
+
 export async function checkStorageAvailable(
   options: { timeoutMs?: number } = {}
 ): Promise<StorageAvailability> {
   const timeoutMs = options.timeoutMs ?? STORAGE_PROBE_TIMEOUT_MS;
+  const bucket = bucketName();
 
-  const probe = (async (): Promise<StorageAvailability> => {
-    try {
-      await getDownloadURL(storageRef(storage, "__availability_probe__/none"));
-      // 있을 리 없는 경로지만 성공했다면 버킷은 확실히 살아 있다
-      return { available: true };
-    } catch (error) {
-      const code = (error as { code?: string })?.code ?? "storage/unknown";
-      if (looksLikeWorkingBucket(code)) return { available: true };
-      return { available: false, code, timedOut: false };
+  if (!bucket) {
+    return { available: false, code: "storage/invalid-argument", timedOut: false };
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs > 0 ? timeoutMs : 30000);
+
+  try {
+    const res = await fetch(
+      `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o?maxResults=1`,
+      { signal: controller.signal }
+    );
+    if (res.status === 404) {
+      return { available: false, code: "storage/bucket-not-found", timedOut: false };
     }
-  })();
-
-  if (timeoutMs <= 0) return probe;
-
-  // 버킷이 없으면 SDK 가 30초까지 재시도한다. 그만큼 화면을 붙잡아 두지 않는다.
-  const timeout = new Promise<StorageAvailability>((resolve) =>
-    setTimeout(
-      () => resolve({ available: false, code: "probe-timeout", timedOut: true }),
-      timeoutMs
-    )
-  );
-
-  return Promise.race([probe, timeout]);
+    // 403(규칙이 막음) 등은 버킷이 살아 있다는 뜻이다
+    return { available: true };
+  } catch {
+    // 네트워크 문제일 수 있으므로 "없다"고 단정하지 않는다
+    return { available: false, code: "probe-timeout", timedOut: true };
+  } finally {
+    clearTimeout(timer);
+  }
 }

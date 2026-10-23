@@ -12,7 +12,7 @@ import {
   submitWeeklyReport,
   uploadWeeklyFile,
 } from "@/services/weeklyReports";
-import { describeStorageError } from "@/lib/storageErrors";
+import { describeStorageError, STORAGE_SETUP_GUIDE } from "@/lib/storageErrors";
 import {
   currentWeekStart,
   isWritableWeek,
@@ -96,7 +96,7 @@ export default function ManagerWeeklyReportsPage() {
   // Storage 설정 문제를 업로드 전에 미리 알려준다.
   // blocking=false 는 "확인 실패"라 단정할 수 없는 경우로, 업로드를 막지 않는다.
   const [storageIssue, setStorageIssue] = useState<
-    { code: string; message: string; blocking: boolean } | null
+    { code: string; message: string; blocking: boolean; needsSetup: boolean } | null
   >(null);
   const [storageChecking, setStorageChecking] = useState(true);
 
@@ -174,6 +174,7 @@ export default function ManagerWeeklyReportsPage() {
               code: result.code,
               message: describeStorageError(result.code).message,
               blocking: !result.timedOut,
+              needsSetup: describeStorageError(result.code).needsSetup,
             }
       );
     } finally {
@@ -192,6 +193,7 @@ export default function ManagerWeeklyReportsPage() {
               code: result.code,
               message: describeStorageError(result.code).message,
               blocking: !result.timedOut,
+              needsSetup: describeStorageError(result.code).needsSetup,
             }
       );
     };
@@ -292,7 +294,12 @@ export default function ManagerWeeklyReportsPage() {
       );
       // 설정 문제라면 배너로도 알려 같은 실패를 반복하지 않게 한다
       if (!userMessage && info.needsSetup) {
-        setStorageIssue({ code: code ?? "storage/unknown", message: info.message, blocking: true });
+        setStorageIssue({
+          code: code ?? "storage/unknown",
+          message: info.message,
+          blocking: true,
+          needsSetup: info.needsSetup,
+        });
       }
     }
   }
@@ -448,12 +455,31 @@ export default function ManagerWeeklyReportsPage() {
             <AlertTriangleIcon className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold text-amber-800">
-                {storageIssue.blocking
-                  ? "파일 업로드를 사용할 수 없습니다"
-                  : "Storage 연결 상태를 확인하지 못했습니다"}
+                {storageIssue.needsSetup
+                  ? "파일 업로드를 쓰려면 설정이 필요합니다"
+                  : "Storage 연결을 확인하지 못했습니다"}
               </p>
               <p className="mt-0.5 text-xs text-amber-700">{storageIssue.message}</p>
-              <p className="mt-1 font-mono text-[11px] text-amber-600">
+
+              {storageIssue.needsSetup && (
+                <ol className="mt-2 list-decimal space-y-0.5 pl-4 text-xs text-amber-800">
+                  {STORAGE_SETUP_GUIDE.steps.map((step) => (
+                    <li key={step}>{step}</li>
+                  ))}
+                </ol>
+              )}
+              {storageIssue.needsSetup && (
+                <a
+                  href={STORAGE_SETUP_GUIDE.consoleUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-2 inline-block rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700"
+                >
+                  Firebase 콘솔에서 Storage 열기
+                </a>
+              )}
+
+              <p className="mt-2 font-mono text-[11px] text-amber-600">
                 오류 코드: {storageIssue.code}
               </p>
             </div>

@@ -30,12 +30,10 @@ const SETUP_CODES = new Set([
 export function describeStorageError(code: string | undefined | null): StorageErrorInfo {
   const normalized = (code ?? "").trim();
 
-  // 확인이 제한 시간 안에 끝나지 않은 경우 — 단정하지 않고 알리기만 한다
+  // 확인이 끝나지 않은 경우 — 오프라인일 수도 있어 단정하지 않는다
   if (normalized === "probe-timeout") {
     return {
-      message:
-        "Storage 연결 상태를 확인하지 못했습니다. 업로드가 되지 않으면 " +
-        "본사 관리자에게 Storage 설정을 확인해달라고 요청해주세요.",
+      message: "네트워크 상태를 확인해주세요. 업로드가 되지 않으면 아래 안내를 따라주세요.",
       retryable: true,
       needsSetup: false,
     };
@@ -81,9 +79,7 @@ export function describeStorageError(code: string | undefined | null): StorageEr
 
   if (SETUP_CODES.has(normalized)) {
     return {
-      message:
-        "Firebase Storage 가 아직 설정되지 않았거나 연결할 수 없습니다. " +
-        "본사 관리자에게 Storage 활성화를 요청해주세요.",
+      message: "이 프로젝트에 Firebase Storage 가 아직 만들어지지 않았습니다.",
       retryable: false,
       needsSetup: true,
     };
@@ -96,13 +92,12 @@ export function describeStorageError(code: string | undefined | null): StorageEr
   };
 }
 
-/**
- * Storage 사용 가능 여부 판정에 쓰는 코드 분류.
- * 없는 파일을 조회해서 아래 코드가 나오면 버킷은 정상이다.
- *   - object-not-found : 버킷은 있고 파일만 없음
- *   - unauthorized     : 버킷은 있고 규칙이 막은 것
- */
-export function looksLikeWorkingBucket(code: string | undefined | null): boolean {
-  const normalized = (code ?? "").trim();
-  return normalized === "storage/object-not-found" || normalized === "storage/unauthorized";
-}
+/** 관리자가 Storage 를 켜야 하는 경우에 보여줄 구체적인 안내 */
+export const STORAGE_SETUP_GUIDE = {
+  consoleUrl: "https://console.firebase.google.com/project/returnoneday/storage",
+  steps: [
+    "Firebase 콘솔 → Storage → '시작하기'",
+    "위치는 asia-northeast3 (서울) 선택 — 나중에 변경할 수 없습니다",
+    "생성 후 보안 규칙 배포: npx firebase-tools deploy --only storage",
+  ],
+} as const;
