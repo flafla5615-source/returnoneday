@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getBranchesByIds } from "@/services/branches";
 import {
+  checkStorageAvailable,
   deleteWeeklyFile,
   getWeeklyReport,
   getWeeklyReportsInRange,
@@ -11,6 +12,7 @@ import {
   submitWeeklyReport,
   uploadWeeklyFile,
 } from "@/services/weeklyReports";
+import { describeStorageError } from "@/lib/storageErrors";
 import {
   currentWeekStart,
   isWritableWeek,
@@ -39,18 +41,25 @@ import {
   HistoryIcon,
   PaperclipIcon,
   PencilIcon,
+  RefreshCwIcon,
   UploadIcon,
+  AlertTriangleIcon,
 } from "lucide-react";
 
 type Tab = "write" | "history";
 
 interface UploadJob {
   key: string;
+  /** 재시도할 수 있도록 원본 File 을 들고 있는다 */
+  file: File;
   name: string;
   size: number;
   percent: number;
   status: "uploading" | "failed";
   message?: string;
+  /** Firebase 오류 코드 — 화면에 그대로 보여준다 */
+  code?: string;
+  retryable?: boolean;
 }
 
 const HISTORY_RANGES = [
@@ -84,6 +93,12 @@ export default function ManagerWeeklyReportsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Storage 설정 문제를 업로드 전에 미리 알려준다.
+  // blocking=false 는 "확인 실패"라 단정할 수 없는 경우로, 업로드를 막지 않는다.
+  const [storageIssue, setStorageIssue] = useState<
+    { code: string; message: string; blocking: boolean } | null
+  >(null);
+  const [storageChecking, setStorageChecking] = useState(true);
 
   useEffect(() => {
     if (!profile) return;
@@ -148,6 +163,58 @@ export default function ManagerWeeklyReportsPage() {
     };
   }, [branchId, tab, historyWeeks, thisWeek, reloadKey]);
 
+  async function runStorageCheck() {
+    setStorageChecking(true);
+    try {
+      const result = await checkStorageAvailable({ timeoutMs: 0 });
+      setStorageIssue(
+        result.available
+          ? null
+          : {
+              code: result.code,
+              message: describeStorageError(result.code).message,
+              blocking: !result.timedOut,
+            }
+      );
+    } finally {
+      setStorageChecking(false);
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    const apply = (result: Awaited<ReturnType<typeof checkStorageAvailable>>) => {
+      if (cancelled) return;
+      setStorageIssue(
+        result.available
+          ? null
+          : {
+              code: result.code,
+              message: describeStorageError(result.code).message,
+              blocking: !result.timedOut,
+            }
+      );
+    };
+
+    (async () => {
+      // 1차: 짧은 제한으로 빠르게 안내
+      const quick = await checkStorageAvailable();
+      apply(quick);
+      if (cancelled) return;
+      setStorageChecking(false);
+
+      // 2차: 제한 없이 확정 답을 받아 안내를 갱신한다
+      // (버킷이 없으면 SDK 재시도가 끝나는 30초쯤 확정된다)
+      if (!quick.available && quick.timedOut) {
+        apply(await checkStorageAvailable({ timeoutMs: 0 }));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const selectedBranch = useMemo(
     () => branches.find((b) => b.id === branchId) ?? null,
     [branches, branchId]
@@ -178,6 +245,58 @@ export default function ManagerWeeklyReportsPage() {
     setJobs([]);
   }
 
+  /** 파일 1개 업로드 — 신규 선택과 재시도가 같은 경로를 쓴다 */
+  async function runUpload(key: string, file: File) {
+    if (!profile || !selectedBranch) return;
+
+    setJobs((prev) =>
+      prev.map((j) =>
+        j.key === key
+          ? { ...j, status: "uploading", percent: 0, message: undefined, code: undefined }
+          : j
+      )
+    );
+
+    try {
+      await uploadWeeklyFile({
+        branchId: selectedBranch.id,
+        branchName: selectedBranch.name,
+        weekStartDate: weekStart,
+        file,
+        uid: profile.uid,
+        name: profile.name,
+        onProgress: (percent) =>
+          setJobs((prev) => prev.map((j) => (j.key === key ? { ...j, percent } : j))),
+      });
+      // 성공한 파일만 목록에 반영한다
+      setJobs((prev) => prev.filter((j) => j.key !== key));
+      setReloadKey((k) => k + 1);
+    } catch (err) {
+      console.error("weekly upload failed:", err);
+      // 검증 실패(형식·크기)는 자체 문구가 있고, 그 외는 Storage 오류 코드로 판단한다
+      const userMessage = (err as Error & { userMessage?: string }).userMessage;
+      const code = (err as { code?: string })?.code;
+      const info = describeStorageError(code);
+      setJobs((prev) =>
+        prev.map((j) =>
+          j.key === key
+            ? {
+                ...j,
+                status: "failed",
+                message: userMessage ?? info.message,
+                code: userMessage ? undefined : code,
+                retryable: userMessage ? false : info.retryable,
+              }
+            : j
+        )
+      );
+      // 설정 문제라면 배너로도 알려 같은 실패를 반복하지 않게 한다
+      if (!userMessage && info.needsSetup) {
+        setStorageIssue({ code: code ?? "storage/unknown", message: info.message, blocking: true });
+      }
+    }
+  }
+
   async function handleFiles(selected: FileList | null) {
     if (!selected || !profile || !selectedBranch) return;
     setError(null);
@@ -188,36 +307,9 @@ export default function ManagerWeeklyReportsPage() {
       const key = `${file.name}-${file.size}-${Date.now()}-${Math.random()}`;
       setJobs((prev) => [
         ...prev,
-        { key, name: file.name, size: file.size, percent: 0, status: "uploading" },
+        { key, file, name: file.name, size: file.size, percent: 0, status: "uploading" },
       ]);
-
-      try {
-        await uploadWeeklyFile({
-          branchId: selectedBranch.id,
-          branchName: selectedBranch.name,
-          weekStartDate: weekStart,
-          file,
-          uid: profile.uid,
-          name: profile.name,
-          onProgress: (percent) =>
-            setJobs((prev) => prev.map((j) => (j.key === key ? { ...j, percent } : j))),
-        });
-        // 성공한 파일만 목록에 반영한다
-        setJobs((prev) => prev.filter((j) => j.key !== key));
-        setReloadKey((k) => k + 1);
-      } catch (err) {
-        console.error("weekly upload failed:", err);
-        const message =
-          (err as Error & { userMessage?: string }).userMessage ??
-          ((err as { code?: string })?.code === "storage/unauthorized"
-            ? "업로드 권한이 없습니다. 담당 지점인지 확인해주세요."
-            : (err as { code?: string })?.code === "storage/retry-limit-exceeded"
-              ? "네트워크가 불안정해 업로드하지 못했습니다. 다시 시도해주세요."
-              : "업로드하지 못했습니다. 잠시 후 다시 시도해주세요.");
-        setJobs((prev) =>
-          prev.map((j) => (j.key === key ? { ...j, status: "failed", message } : j))
-        );
-      }
+      await runUpload(key, file);
     }
 
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -291,7 +383,7 @@ export default function ManagerWeeklyReportsPage() {
   }
 
   const uploading = jobs.some((j) => j.status === "uploading");
-  const canAddMore = files.length < WEEKLY_FILE_MAX_COUNT;
+  const canAddMore = files.length < WEEKLY_FILE_MAX_COUNT && !storageIssue?.blocking;
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">
@@ -348,6 +440,34 @@ export default function ManagerWeeklyReportsPage() {
         <p className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
           {notice}
         </p>
+      )}
+
+      {storageIssue && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-3">
+          <div className="flex items-start gap-2">
+            <AlertTriangleIcon className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-amber-800">
+                {storageIssue.blocking
+                  ? "파일 업로드를 사용할 수 없습니다"
+                  : "Storage 연결 상태를 확인하지 못했습니다"}
+              </p>
+              <p className="mt-0.5 text-xs text-amber-700">{storageIssue.message}</p>
+              <p className="mt-1 font-mono text-[11px] text-amber-600">
+                오류 코드: {storageIssue.code}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={runStorageCheck}
+              disabled={storageChecking}
+              className="flex shrink-0 items-center gap-1 rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-xs text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+            >
+              <RefreshCwIcon className={storageChecking ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
+              다시 확인
+            </button>
+          </div>
+        </div>
       )}
 
       {tab === "write" && (
@@ -419,6 +539,7 @@ export default function ManagerWeeklyReportsPage() {
                   multiple
                   accept=".pdf,.xlsx,.xls,.docx"
                   onChange={(e) => handleFiles(e.target.files)}
+                  disabled={!canAddMore}
                   className="hidden"
                   id="weekly-file-input"
                 />
@@ -432,7 +553,11 @@ export default function ManagerWeeklyReportsPage() {
                 >
                   <UploadIcon className="h-5 w-5 text-gray-400" />
                   <span className="text-sm font-medium text-gray-700">
-                    {canAddMore ? "파일 선택" : `최대 ${WEEKLY_FILE_MAX_COUNT}개까지 첨부했습니다`}
+                    {storageIssue?.blocking
+                      ? "업로드를 사용할 수 없습니다"
+                      : canAddMore
+                        ? "파일 선택"
+                        : `최대 ${WEEKLY_FILE_MAX_COUNT}개까지 첨부했습니다`}
                   </span>
                   <span className="text-[11px] text-gray-400">
                     PDF, XLSX, XLS, DOCX · 파일당 최대 {formatFileSize(WEEKLY_FILE_MAX_BYTES)}
@@ -468,15 +593,30 @@ export default function ManagerWeeklyReportsPage() {
                           />
                         </div>
                       ) : (
-                        <div className="mt-1 flex items-center justify-between gap-2">
+                        <div className="mt-1 space-y-1.5">
                           <p className="text-[11px] text-red-600">{j.message}</p>
-                          <button
-                            type="button"
-                            onClick={() => setJobs((prev) => prev.filter((x) => x.key !== j.key))}
-                            className="shrink-0 text-[11px] text-gray-500 underline"
-                          >
-                            지우기
-                          </button>
+                          {j.code && (
+                            <p className="font-mono text-[11px] text-red-400">오류 코드: {j.code}</p>
+                          )}
+                          <div className="flex justify-end gap-2">
+                            {j.retryable && (
+                              <button
+                                type="button"
+                                onClick={() => runUpload(j.key, j.file)}
+                                className="flex items-center gap-1 rounded border border-gray-300 bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-50"
+                              >
+                                <RefreshCwIcon className="h-3 w-3" />
+                                재시도
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setJobs((prev) => prev.filter((x) => x.key !== j.key))}
+                              className="text-[11px] text-gray-500 underline"
+                            >
+                              지우기
+                            </button>
+                          </div>
                         </div>
                       )}
                     </li>
